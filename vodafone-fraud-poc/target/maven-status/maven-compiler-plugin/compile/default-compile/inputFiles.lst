@@ -1,0 +1,10 @@
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/VodafoneFraudPoC.java
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/event/FraudAlert.java
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/detector/StaticalRuleSqlDetector.java
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/detector/VelocityFraudDetector.java
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/event/LocationEvent.java
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/detector/CallForwardingDetector.java
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/generator/CdrGenerator.java
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/generator/LocationGenerator.java
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/event/CdrEvent.java
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/detector/SequentialDialingDetector.java
