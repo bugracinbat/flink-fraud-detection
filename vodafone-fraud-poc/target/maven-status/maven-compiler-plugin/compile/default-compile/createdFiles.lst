@@ -1,7 +1,9 @@
 com/vodafone/poc/detector/StaticalRuleSqlDetector.class
 com/vodafone/poc/detector/VelocityFraudDetector$2.class
+com/vodafone/poc/server/SimulationServer$SimulateHandler.class
 com/vodafone/poc/VodafoneFraudPoC.class
 com/vodafone/poc/detector/SequentialDialingDetector$SequentialDialingProcessFunction.class
+com/vodafone/poc/server/SimulationServer.class
 com/vodafone/poc/detector/VelocityFraudDetector.class
 com/vodafone/poc/generator/LocationGenerator.class
 com/vodafone/poc/detector/CallForwardingDetector$ForwardingProcessFunction.class
@@ -9,6 +11,8 @@ com/vodafone/poc/event/FraudAlert.class
 com/vodafone/poc/event/LocationEvent.class
 com/vodafone/poc/event/CdrEvent.class
 com/vodafone/poc/detector/SequentialDialingDetector.class
+com/vodafone/poc/server/SimulationServer$AlertsHandler.class
 com/vodafone/poc/generator/CdrGenerator.class
+com/vodafone/poc/sink/AlertSink.class
 com/vodafone/poc/detector/CallForwardingDetector.class
 com/vodafone/poc/detector/VelocityFraudDetector$1.class

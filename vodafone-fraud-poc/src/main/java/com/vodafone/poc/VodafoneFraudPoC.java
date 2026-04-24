@@ -9,6 +9,8 @@ import com.vodafone.poc.event.FraudAlert;
 import com.vodafone.poc.event.LocationEvent;
 import com.vodafone.poc.generator.CdrGenerator;
 import com.vodafone.poc.generator.LocationGenerator;
+import com.vodafone.poc.server.SimulationServer;
+import com.vodafone.poc.sink.AlertSink;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -52,14 +54,15 @@ public class VodafoneFraudPoC {
         // Scenario 8: Call Forwarding Distance
         DataStream<FraudAlert> callForwardingAlerts = CallForwardingDetector.detect(cdrStream);
 
-        // 4. Sink: Print alerts to stdout
-        velocityAlerts.print().name("VelocityAlert-Sink");
-        sequentialDialingAlerts.print().name("SequentialAlert-Sink");
-        staticalRuleAlerts.print().name("StaticalRuleAlert-Sink");
-        callForwardingAlerts.print().name("CallForwardingAlert-Sink");
+        // 4. Sink: Send alerts to SSE Simulation Server
+        velocityAlerts.addSink(new AlertSink()).name("VelocityAlert-Sink");
+        sequentialDialingAlerts.addSink(new AlertSink()).name("SequentialAlert-Sink");
+        staticalRuleAlerts.addSink(new AlertSink()).name("StaticalRuleAlert-Sink");
+        callForwardingAlerts.addSink(new AlertSink()).name("CallForwardingAlert-Sink");
 
         // 5. Execute Job
         System.out.println("Starting Vodafone Fraud Detection PoC with Apache Flink...");
+        SimulationServer.startServer();
         env.execute("Vodafone Fraud Detection PoC");
     }
 }

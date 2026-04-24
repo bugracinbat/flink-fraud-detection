@@ -1,4 +1,6 @@
 /Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/VodafoneFraudPoC.java
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/sink/AlertSink.java
+/Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/server/SimulationServer.java
 /Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/event/FraudAlert.java
 /Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/detector/StaticalRuleSqlDetector.java
 /Users/bugracinbat/repos/vodafone-fraud-poc/src/main/java/com/vodafone/poc/detector/VelocityFraudDetector.java
