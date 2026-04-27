@@ -407,6 +407,87 @@ button {
   gap: 1rem;
 }
 
+.feed-toolbar.compact {
+  align-items: center;
+}
+
+.run-history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.run-table {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.run-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.85rem;
+  min-height: 64px;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--surface);
+}
+
+.run-row.empty {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+}
+
+.run-row strong,
+.run-row span {
+  display: block;
+}
+
+.run-row > div:first-child strong {
+  font-size: 0.86rem;
+}
+
+.run-row > div:first-child span,
+.run-alerts span {
+  margin-top: 0.25rem;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+}
+
+.run-alerts {
+  min-width: 86px;
+  text-align: right;
+}
+
+.run-alerts strong {
+  margin-top: 0.2rem;
+  font-size: 0.9rem;
+}
+
+.run-verdict {
+  min-width: 96px;
+  padding: 0.32rem 0.5rem;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #facc7b;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.run-row[data-verdict="Matched"] .run-verdict {
+  background: rgba(34, 197, 94, 0.13);
+  color: #8df3b2;
+}
+
+.run-row[data-verdict="False positive"] .run-verdict,
+.run-row[data-verdict="Missed"] .run-verdict {
+  background: rgba(248, 113, 113, 0.13);
+  color: #ffadad;
+}
+
 .clear-btn,
 .filter-bar button {
   border-radius: 8px;
@@ -543,6 +624,21 @@ button {
   margin-bottom: 0.35rem;
 }
 
+.alert-run-id {
+  display: inline-block;
+  max-width: 100%;
+  margin-bottom: 0.4rem;
+  padding: 0.18rem 0.42rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+
 .alert-desc {
   margin: 0;
   color: var(--text-secondary);
@@ -620,6 +716,16 @@ button {
   .feed-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .run-row {
+    grid-template-columns: 1fr;
+  }
+
+  .run-alerts,
+  .run-verdict {
+    min-width: 0;
+    text-align: left;
   }
 
   .clear-btn {

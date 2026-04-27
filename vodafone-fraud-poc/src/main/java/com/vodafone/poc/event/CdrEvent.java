@@ -12,6 +12,7 @@ public class CdrEvent implements Serializable {
     private String imei;
     private double dataUsageMb;
     private int simAgeDays;
+    private String runId;
 
     public CdrEvent() {}
 
@@ -54,6 +55,9 @@ public class CdrEvent implements Serializable {
     public int getSimAgeDays() { return simAgeDays; }
     public void setSimAgeDays(int simAgeDays) { this.simAgeDays = simAgeDays; }
 
+    public String getRunId() { return runId; }
+    public void setRunId(String runId) { this.runId = runId; }
+
     @Override
     public String toString() {
         return "CdrEvent{" +
@@ -61,6 +65,7 @@ public class CdrEvent implements Serializable {
                 ", callee='" + callee + '\'' +
                 ", timestamp=" + timestamp +
                 ", forwardedTo='" + forwardedTo + '\'' +
+                ", runId='" + runId + '\'' +
                 '}';
     }
 }

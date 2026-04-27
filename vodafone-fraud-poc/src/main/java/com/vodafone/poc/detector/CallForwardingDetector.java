@@ -63,7 +63,8 @@ public class CallForwardingDetector {
                         event.getCallee(),
                         "DISTANCE_FORWARDING_FRAUD",
                         "Callee B (" + event.getCallee() + ") keeps redirecting calls to " + activeDistinctForwards + " different numbers.",
-                        currentTime
+                        currentTime,
+                        event.getRunId()
                 ));
                 // Clear state after alert
                 forwardedNumbersState.clear();

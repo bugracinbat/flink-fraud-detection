@@ -8,7 +8,6 @@ import org.apache.flink.cep.PatternStream;
 import org.apache.flink.cep.functions.PatternProcessFunction;
 import org.apache.flink.cep.pattern.Pattern;
 import org.apache.flink.cep.pattern.conditions.IterativeCondition;
-import org.apache.flink.cep.pattern.conditions.SimpleCondition;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.windowing.time.Time;
@@ -55,7 +54,7 @@ public class VelocityFraudDetector {
                 String description = String.format("SIM clone detected. Location jump from %s to %s in %d ms.",
                         first.getLocation(), second.getLocation(), (second.getTimestamp() - first.getTimestamp()));
 
-                out.collect(new FraudAlert(first.getMsisdn(), "VELOCITY_FRAUD_SIM_CLONE", description, second.getTimestamp()));
+                out.collect(new FraudAlert(first.getMsisdn(), "VELOCITY_FRAUD_SIM_CLONE", description, second.getTimestamp(), second.getRunId()));
             }
         });
     }

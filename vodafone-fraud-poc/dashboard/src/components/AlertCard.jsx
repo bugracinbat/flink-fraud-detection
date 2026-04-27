@@ -44,6 +44,7 @@ export const AlertCard = ({ alert }) => {
           <time className="alert-time">{time}</time>
         </div>
         <div className="alert-msisdn">{alert.msisdn}</div>
+        {alert.runId && <div className="alert-run-id">{alert.runId}</div>}
         <p className="alert-desc">{alert.description}</p>
       </div>
     </article>

@@ -7,6 +7,7 @@ public class FraudAlert implements Serializable {
     private String fraudType;
     private String description;
     private long timestamp;
+    private String runId;
 
     public FraudAlert() {}
 
@@ -15,6 +16,11 @@ public class FraudAlert implements Serializable {
         this.fraudType = fraudType;
         this.description = description;
         this.timestamp = timestamp;
+    }
+
+    public FraudAlert(String msisdn, String fraudType, String description, long timestamp, String runId) {
+        this(msisdn, fraudType, description, timestamp);
+        this.runId = runId;
     }
 
     public String getMsisdn() { return msisdn; }
@@ -29,8 +35,11 @@ public class FraudAlert implements Serializable {
     public long getTimestamp() { return timestamp; }
     public void setTimestamp(long timestamp) { this.timestamp = timestamp; }
 
+    public String getRunId() { return runId; }
+    public void setRunId(String runId) { this.runId = runId; }
+
     @Override
     public String toString() {
-        return "\u001B[31m[FRAUD ALERT] Type: " + fraudType + ", MSISDN: " + msisdn + ", Desc: " + description + "\u001B[0m";
+        return "\u001B[31m[FRAUD ALERT] Type: " + fraudType + ", MSISDN: " + msisdn + ", Run: " + runId + ", Desc: " + description + "\u001B[0m";
     }
 }

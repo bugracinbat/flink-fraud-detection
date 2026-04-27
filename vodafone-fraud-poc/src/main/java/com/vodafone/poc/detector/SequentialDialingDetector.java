@@ -73,7 +73,8 @@ public class SequentialDialingDetector {
                                 event.getMsisdn(),
                                 "SEQUENTIAL_DIALING",
                                 "Detected " + maxSeqLength + " sequential numbers dialed within short period.",
-                                event.getTimestamp()
+                                event.getTimestamp(),
+                                event.getRunId()
                         ));
                         // Clear state after alert
                         dialedNumbersState.clear();

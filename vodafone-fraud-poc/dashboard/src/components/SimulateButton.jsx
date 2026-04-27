@@ -29,9 +29,9 @@ export const SimulateButton = ({ scenario, alertCount, intensity, onSimulate }) 
       <span className="sim-copy">
         <span className="sim-title-row">
           <strong>{scenario.title}</strong>
-          <span>{alertCount}</span>
+          <span>{scenario.kind === 'Near miss' ? '0x' : alertCount}</span>
         </span>
-        <span className="sim-description">{error || scenario.description}</span>
+        <span className="sim-description">{error || `${scenario.kind}: ${scenario.description}`}</span>
       </span>
       <span className="sim-action">{loading ? '...' : `Run ${intensity.toLowerCase()}`}</span>
     </button>

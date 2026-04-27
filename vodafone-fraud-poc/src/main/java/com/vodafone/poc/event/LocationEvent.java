@@ -6,6 +6,7 @@ public class LocationEvent implements Serializable {
     private String msisdn;
     private String location; // e.g., "Germany", "Turkiye"
     private long timestamp;
+    private String runId;
 
     public LocationEvent() {}
 
@@ -24,12 +25,16 @@ public class LocationEvent implements Serializable {
     public long getTimestamp() { return timestamp; }
     public void setTimestamp(long timestamp) { this.timestamp = timestamp; }
 
+    public String getRunId() { return runId; }
+    public void setRunId(String runId) { this.runId = runId; }
+
     @Override
     public String toString() {
         return "LocationEvent{" +
                 "msisdn='" + msisdn + '\'' +
                 ", location='" + location + '\'' +
                 ", timestamp=" + timestamp +
+                ", runId='" + runId + '\'' +
                 '}';
     }
 }

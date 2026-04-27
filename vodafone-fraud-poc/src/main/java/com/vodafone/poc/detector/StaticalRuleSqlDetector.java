@@ -19,6 +19,7 @@ public class StaticalRuleSqlDetector {
                 .column("timestamp", "BIGINT")
                 .column("dataUsageMb", "DOUBLE")
                 .column("simAgeDays", "INT")
+                .column("runId", "STRING")
                 .columnByExpression("ts", "TO_TIMESTAMP_LTZ(`timestamp`, 3)")
                 .watermark("ts", "ts - INTERVAL '5' SECOND")
                 .build();
@@ -32,11 +33,12 @@ public class StaticalRuleSqlDetector {
         String sql = 
                 "SELECT " +
                 "  msisdn, " +
+                "  runId, " +
                 "  window_end, " +
                 "  COUNT(DISTINCT callee) as distinct_callees " +
                 "FROM TABLE(TUMBLE(TABLE cdrs, DESCRIPTOR(ts), INTERVAL '1' DAY)) " +
                 "WHERE simAgeDays <= 3 AND dataUsageMb < 5.0 " +
-                "GROUP BY msisdn, window_end, window_start " +
+                "GROUP BY msisdn, runId, window_end, window_start " +
                 "HAVING COUNT(DISTINCT callee) >= 10";
 
         Table resultTable = tEnv.sqlQuery(sql);
@@ -46,9 +48,10 @@ public class StaticalRuleSqlDetector {
 
         return resultStream.map(row -> {
             String msisdn = (String) row.getField("msisdn");
+            String runId = (String) row.getField("runId");
             long distinctCallees = (long) row.getField("distinct_callees");
             String desc = String.format("Static rule violation: SIM <= 3 days old, low data usage, but called %d distinct numbers.", distinctCallees);
-            return new FraudAlert(msisdn, "STATICAL_RULE_FRAUD", desc, System.currentTimeMillis());
+            return new FraudAlert(msisdn, "STATICAL_RULE_FRAUD", desc, System.currentTimeMillis(), runId);
         });
     }
 }

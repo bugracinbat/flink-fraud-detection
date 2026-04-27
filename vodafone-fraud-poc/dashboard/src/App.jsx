@@ -10,6 +10,7 @@ const scenarios = [
     title: 'SIM Clone Velocity',
     detector: 'VELOCITY_FRAUD_SIM_CLONE',
     accent: 'velocity',
+    kind: 'Fraud',
     description: 'Same subscriber appears in Germany, then Turkiye five minutes later.',
   },
   {
@@ -17,6 +18,7 @@ const scenarios = [
     title: 'Sequential Dialing',
     detector: 'SEQUENTIAL_DIALING',
     accent: 'sequential',
+    kind: 'Fraud',
     description: 'One caller rapidly dials incrementing destination numbers.',
   },
   {
@@ -24,6 +26,7 @@ const scenarios = [
     title: 'Static Rule Anomaly',
     detector: 'STATICAL_RULE_FRAUD',
     accent: 'static',
+    kind: 'Fraud',
     description: 'A fresh SIM with low data usage calls many distinct numbers.',
   },
   {
@@ -31,13 +34,49 @@ const scenarios = [
     title: 'Forwarding Fan-out',
     detector: 'DISTANCE_FORWARDING_FRAUD',
     accent: 'forwarding',
+    kind: 'Fraud',
     description: 'A callee redirects several short calls to different numbers.',
+  },
+  {
+    id: 'NEAR_MISS_SIM_CLONE',
+    title: 'Near Miss: Location',
+    detector: null,
+    accent: 'velocity',
+    kind: 'Near miss',
+    description: 'Repeated benign location pings that should stay quiet.',
+  },
+  {
+    id: 'NEAR_MISS_SEQUENTIAL',
+    title: 'Near Miss: Sequence',
+    detector: null,
+    accent: 'sequential',
+    kind: 'Near miss',
+    description: 'Only three sequential calls, below the alert threshold.',
+  },
+  {
+    id: 'NEAR_MISS_STATICAL_RULE',
+    title: 'Near Miss: Static Rule',
+    detector: null,
+    accent: 'static',
+    kind: 'Near miss',
+    description: 'Nine distinct callees, one short of the SQL rule.',
+  },
+  {
+    id: 'NEAR_MISS_CALL_FORWARDING',
+    title: 'Near Miss: Forwarding',
+    detector: null,
+    accent: 'forwarding',
+    kind: 'Near miss',
+    description: 'Three forwarded destinations, below the forwarding threshold.',
   },
 ]
 
 const filters = [
   { id: 'ALL', label: 'All' },
-  ...scenarios.map((scenario) => ({ id: scenario.detector, label: scenario.title })),
+  { id: 'VELOCITY_FRAUD_SIM_CLONE', label: 'SIM Clone Velocity' },
+  { id: 'SEQUENTIAL_DIALING', label: 'Sequential Dialing' },
+  { id: 'STATICAL_RULE_FRAUD', label: 'Static Rule Fraud' },
+  { id: 'DISTANCE_FORWARDING_FRAUD', label: 'Forwarding Fan-out' },
 ]
 
 const intensityOptions = [
@@ -54,6 +93,14 @@ function formatUptime(ms = 0) {
   if (hours > 0) return `${hours}h ${minutes % 60}m`
   if (minutes > 0) return `${minutes}m ${seconds % 60}s`
   return `${seconds}s`
+}
+
+function verdictFor(run) {
+  if (!run) return 'Pending'
+  if (run.expectedAlerts === run.actualAlerts) return 'Matched'
+  if (run.expectedAlerts === 0 && run.actualAlerts > 0) return 'False positive'
+  if (run.expectedAlerts > 0 && run.actualAlerts === 0) return 'Missed'
+  return run.alertDelta > 0 ? 'Extra alerts' : 'Under detected'
 }
 
 function App() {
@@ -151,6 +198,9 @@ function App() {
   }[connectionState]
 
   const activeRuns = serverStatus?.activeRuns ?? []
+  const completedRuns = serverStatus?.completedRuns ?? []
+  const matchedRuns = completedRuns.filter((run) => run.expectedAlerts === run.actualAlerts).length
+  const detectionScore = completedRuns.length > 0 ? Math.round((matchedRuns / completedRuns.length) * 100) : 0
 
   return (
     <>
@@ -194,7 +244,7 @@ function App() {
               <SimulateButton
                 key={scenario.id}
                 scenario={scenario}
-                alertCount={alertCounts[scenario.detector] || 0}
+                alertCount={scenario.detector ? alertCounts[scenario.detector] || 0 : 0}
                 intensity={intensity}
                 onSimulate={handleSimulate}
               />
@@ -206,7 +256,7 @@ function App() {
               <span>Last scheduled run</span>
               <strong>{lastSimulation.scenario.replaceAll('_', ' ')} · {lastSimulation.intensity}</strong>
               <p>
-                {lastSimulation.totalEvents} events over {formatUptime(lastSimulation.durationMs)} with {lastSimulation.expectedAlerts} expected alerts
+                {lastSimulation.totalEvents} events over {formatUptime(lastSimulation.durationMs)} · expected {lastSimulation.expectedAlerts}, actual {lastSimulation.actualAlerts}
               </p>
             </div>
           )}
@@ -218,7 +268,7 @@ function App() {
                 <div className="run-progress" key={run.runId}>
                   <div>
                     <strong>{run.scenario.replaceAll('_', ' ')}</strong>
-                    <small>{run.emittedEvents}/{run.totalEvents} events</small>
+                    <small>{run.emittedEvents}/{run.totalEvents} · {run.actualAlerts}/{run.expectedAlerts} alerts</small>
                   </div>
                   <progress max={run.totalEvents} value={run.emittedEvents} />
                 </div>
@@ -232,6 +282,10 @@ function App() {
             <div className="metric">
               <span>Total alerts</span>
               <strong>{alerts.length}</strong>
+            </div>
+            <div className="metric">
+              <span>Run match rate</span>
+              <strong>{completedRuns.length > 0 ? `${detectionScore}%` : '-'}</strong>
             </div>
             <div className="metric">
               <span>Simulations</span>
@@ -248,6 +302,35 @@ function App() {
             <div className="metric">
               <span>Server uptime</span>
               <strong>{serverStatus ? formatUptime(serverStatus.uptimeMs) : '-'}</strong>
+            </div>
+          </div>
+
+          <div className="run-history">
+            <div className="feed-toolbar compact">
+              <div>
+                <h2>Run Quality</h2>
+                <p>{completedRuns.length} completed runs with expected vs actual alert counts</p>
+              </div>
+            </div>
+
+            <div className="run-table">
+              {completedRuns.length === 0 ? (
+                <div className="run-row empty">Completed runs will appear here.</div>
+              ) : (
+                completedRuns.slice(0, 8).map((run) => (
+                  <div className="run-row" data-verdict={verdictFor(run)} key={run.runId}>
+                    <div>
+                      <strong>{run.scenario.replaceAll('_', ' ')}</strong>
+                      <span>{run.intensity} · {run.totalEvents} events · {formatUptime(run.durationMs)}</span>
+                    </div>
+                    <div className="run-alerts">
+                      <span>{run.expectedAlerts} expected</span>
+                      <strong>{run.actualAlerts} actual</strong>
+                    </div>
+                    <div className="run-verdict">{verdictFor(run)}</div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 

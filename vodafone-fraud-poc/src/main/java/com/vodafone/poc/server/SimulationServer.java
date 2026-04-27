@@ -14,7 +14,9 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -45,13 +47,20 @@ public class SimulationServer {
     private static final Random random = new Random();
     private static final ScheduledExecutorService simulationExecutor = Executors.newScheduledThreadPool(4);
     private static final ConcurrentHashMap<String, SimulationRun> activeRuns = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, SimulationRun> runsById = new ConcurrentHashMap<>();
+    private static final Deque<SimulationRun> completedRuns = new ArrayDeque<>();
     private static final Map<String, String> scenarios = new LinkedHashMap<>();
+    private static final int COMPLETED_RUN_HISTORY_LIMIT = 20;
 
     static {
         scenarios.put("SIM_CLONE", "Location velocity pattern using impossible country jumps.");
         scenarios.put("SEQUENTIAL_DIALING", "Rapid calls to sequential destination numbers.");
         scenarios.put("STATICAL_RULE", "New SIM with low data usage and many distinct callees.");
         scenarios.put("CALL_FORWARDING", "One callee redirecting to many different forwarded numbers.");
+        scenarios.put("NEAR_MISS_SIM_CLONE", "Benign repeated location pings that should not trigger velocity fraud.");
+        scenarios.put("NEAR_MISS_SEQUENTIAL", "Three sequential calls, just below the four-number threshold.");
+        scenarios.put("NEAR_MISS_STATICAL_RULE", "New SIM with only nine distinct callees, below the SQL threshold.");
+        scenarios.put("NEAR_MISS_CALL_FORWARDING", "Three forwarded destinations, below the forwarding threshold.");
     }
 
     public static void startServer() throws IOException {
@@ -68,6 +77,7 @@ public class SimulationServer {
 
     public static void broadcastAlert(FraudAlert alert) {
         alertsBroadcast.incrementAndGet();
+        recordActualAlert(alert);
         String json = gson.toJson(alert);
         String sseData = "data: " + json + "\n\n";
         byte[] bytes = sseData.getBytes(StandardCharsets.UTF_8);
@@ -80,6 +90,18 @@ public class SimulationServer {
             } catch (IOException e) {
                 sseClients.remove(client);
             }
+        }
+    }
+
+    private static void recordActualAlert(FraudAlert alert) {
+        String runId = alert.getRunId();
+        if (runId == null || runId.isEmpty()) {
+            return;
+        }
+
+        SimulationRun run = runsById.get(runId);
+        if (run != null) {
+            run.markAlert(alert);
         }
     }
 
@@ -134,6 +156,26 @@ public class SimulationServer {
                 fraudCdrEvents = profile.forwardingCalls;
                 expectedAlerts = Math.max(1, profile.forwardingCalls / 4);
                 addCallForwardingEvents(events, profile);
+                break;
+            case "NEAR_MISS_SIM_CLONE":
+                fraudLocationEvents = 3;
+                expectedAlerts = 0;
+                addNearMissSimCloneEvents(events, profile);
+                break;
+            case "NEAR_MISS_SEQUENTIAL":
+                fraudCdrEvents = 3;
+                expectedAlerts = 0;
+                addNearMissSequentialEvents(events, profile);
+                break;
+            case "NEAR_MISS_STATICAL_RULE":
+                fraudCdrEvents = 9;
+                expectedAlerts = 0;
+                addNearMissStaticRuleEvents(events, profile);
+                break;
+            case "NEAR_MISS_CALL_FORWARDING":
+                fraudCdrEvents = 3;
+                expectedAlerts = 0;
+                addNearMissCallForwardingEvents(events, profile);
                 break;
             default:
                 throw new IllegalArgumentException("Unknown simulation scenario: " + scenario);
@@ -213,6 +255,42 @@ public class SimulationServer {
         }
     }
 
+    private static void addNearMissSimCloneEvents(List<ScheduledEvent> events, SimulationProfile profile) {
+        String msisdn = "905559998866";
+        for (int i = 0; i < 3; i++) {
+            long delay = i * profile.spacingMs;
+            events.add(ScheduledEvent.location(delay, new LocationEvent(msisdn, "Istanbul", 0), false));
+        }
+    }
+
+    private static void addNearMissSequentialEvents(List<ScheduledEvent> events, SimulationProfile profile) {
+        String caller = "905554443311";
+        long seqBase = 905550900000L + (activeRunSequence.incrementAndGet() * 1000);
+        for (int i = 0; i < 3; i++) {
+            long delay = i * profile.spacingMs;
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, String.valueOf(seqBase + i), 0, 6, null, "Cell-NM", "IMEI-NM1", 40.0, 120), false));
+        }
+    }
+
+    private static void addNearMissStaticRuleEvents(List<ScheduledEvent> events, SimulationProfile profile) {
+        String caller = "905553332200";
+        long calleeBase = 905559880000L + (activeRunSequence.incrementAndGet() * 1000);
+        for (int i = 0; i < 9; i++) {
+            long delay = i * profile.spacingMs;
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, String.valueOf(calleeBase + i), 0, 30, null, "Cell-NM", "IMEI-NM2", 2.5, 2), false));
+        }
+    }
+
+    private static void addNearMissCallForwardingEvents(List<ScheduledEvent> events, SimulationProfile profile) {
+        String callerA = "905551111100";
+        String calleeB = "905552222200";
+        long forwardedBase = 905558770000L + (activeRunSequence.incrementAndGet() * 1000);
+        for (int i = 0; i < 3; i++) {
+            long delay = i * profile.spacingMs;
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(callerA, calleeB, 0, 0, String.valueOf(forwardedBase + i), "Cell-NM", "IMEI-NM3", 150.0, 500), false));
+        }
+    }
+
     private static void addBackgroundEvents(List<ScheduledEvent> events, SimulationProfile profile, int count) {
         long totalDuration = Math.max(profile.spacingMs * 8L, maxDelay(events));
         long step = Math.max(120L, totalDuration / Math.max(1, count));
@@ -272,6 +350,7 @@ public class SimulationServer {
         String runId = plan.scenario + "-" + UUID.randomUUID().toString().substring(0, 8);
         SimulationRun run = new SimulationRun(runId, plan);
         activeRuns.put(runId, run);
+        runsById.put(runId, run);
         simulationsTriggered.incrementAndGet();
         eventsScheduled.addAndGet(plan.events.size());
 
@@ -281,10 +360,12 @@ public class SimulationServer {
                 if (event.cdrEvent != null) {
                     CdrEvent cdr = event.cdrEvent;
                     cdr.setTimestamp(now);
+                    cdr.setRunId(run.runId);
                     cdrQueue.offer(cdr);
                 } else {
                     LocationEvent location = event.locationEvent;
                     location.setTimestamp(now);
+                    location.setRunId(run.runId);
                     locationQueue.offer(location);
                 }
 
@@ -292,11 +373,21 @@ public class SimulationServer {
                 if (run.markEventEmitted() >= run.totalEvents) {
                     run.completedAt = System.currentTimeMillis();
                     activeRuns.remove(run.runId);
+                    recordCompletedRun(run);
                 }
             }, event.delayMs, TimeUnit.MILLISECONDS);
         }
 
         return run;
+    }
+
+    private static synchronized void recordCompletedRun(SimulationRun run) {
+        completedRuns.remove(run);
+        completedRuns.addFirst(run);
+        while (completedRuns.size() > COMPLETED_RUN_HISTORY_LIMIT) {
+            SimulationRun removed = completedRuns.removeLast();
+            runsById.remove(removed.runId);
+        }
     }
 
     private static boolean handleCors(HttpExchange exchange) throws IOException {
@@ -365,6 +456,12 @@ public class SimulationServer {
             for (SimulationRun run : activeRuns.values()) {
                 runs.add(run.toStatus());
             }
+            List<Map<String, Object>> history = new ArrayList<>();
+            synchronized (SimulationServer.class) {
+                for (SimulationRun run : completedRuns) {
+                    history.add(run.toStatus());
+                }
+            }
 
             Map<String, Object> status = new LinkedHashMap<>();
             status.put("status", "ok");
@@ -377,6 +474,7 @@ public class SimulationServer {
             status.put("eventsScheduled", eventsScheduled.get());
             status.put("eventsEmitted", eventsEmitted.get());
             status.put("activeRuns", runs);
+            status.put("completedRuns", history);
             status.put("scenarios", scenarios);
             sendJson(exchange, 200, status);
         }
@@ -458,7 +556,10 @@ public class SimulationServer {
         private final int backgroundLocationEvents;
         private final int expectedAlerts;
         private final AtomicInteger emittedEvents = new AtomicInteger();
+        private final AtomicInteger actualAlerts = new AtomicInteger();
         private volatile long completedAt;
+        private volatile long firstAlertAt;
+        private volatile long lastAlertAt;
 
         private SimulationRun(String runId, SimulationPlan plan) {
             this.runId = runId;
@@ -476,6 +577,17 @@ public class SimulationServer {
 
         private int markEventEmitted() {
             return emittedEvents.incrementAndGet();
+        }
+
+        private void markAlert(FraudAlert alert) {
+            actualAlerts.incrementAndGet();
+            long alertTime = alert.getTimestamp();
+            if (firstAlertAt == 0 || alertTime < firstAlertAt) {
+                firstAlertAt = alertTime;
+            }
+            if (alertTime > lastAlertAt) {
+                lastAlertAt = alertTime;
+            }
         }
 
         private Map<String, Object> toResponse() {
@@ -499,7 +611,12 @@ public class SimulationServer {
             status.put("backgroundCdrEvents", backgroundCdrEvents);
             status.put("backgroundLocationEvents", backgroundLocationEvents);
             status.put("expectedAlerts", expectedAlerts);
+            status.put("actualAlerts", actualAlerts.get());
+            status.put("alertDelta", actualAlerts.get() - expectedAlerts);
+            status.put("firstAlertLatencyMs", firstAlertAt > 0 ? firstAlertAt - startedAt : null);
+            status.put("lastAlertAt", lastAlertAt > 0 ? lastAlertAt : null);
             status.put("completed", completedAt > 0);
+            status.put("completedAt", completedAt > 0 ? completedAt : null);
             return status;
         }
     }
