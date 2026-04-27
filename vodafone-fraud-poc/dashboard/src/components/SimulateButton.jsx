@@ -1,34 +1,39 @@
-import React, { useState } from 'react';
+import { useState } from 'react'
 
-export const SimulateButton = ({ scenario, title, description }) => {
-  const [loading, setLoading] = useState(false);
+export const SimulateButton = ({ scenario, alertCount, onSimulate }) => {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
   const handleClick = async () => {
-    setLoading(true);
+    setLoading(true)
+    setError('')
+
     try {
-      await fetch('http://localhost:8080/api/simulate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ scenario }),
-      });
-    } catch (error) {
-      console.error('Simulation failed', error);
+      await onSimulate(scenario.id)
+    } catch (simulationError) {
+      setError(simulationError.message)
     } finally {
-      setTimeout(() => setLoading(false), 500); // Visual feedback
+      window.setTimeout(() => setLoading(false), 450)
     }
-  };
+  }
 
   return (
-    <button 
-      className="sim-btn" 
-      data-scenario={scenario}
+    <button
+      className="sim-btn"
+      data-accent={scenario.accent}
       onClick={handleClick}
       disabled={loading}
+      type="button"
     >
-      <h3>{title} {loading && '⏳'}</h3>
-      <p>{description}</p>
+      <span className="sim-icon" aria-hidden="true" />
+      <span className="sim-copy">
+        <span className="sim-title-row">
+          <strong>{scenario.title}</strong>
+          <span>{alertCount}</span>
+        </span>
+        <span className="sim-description">{error || scenario.description}</span>
+      </span>
+      <span className="sim-action">{loading ? '...' : 'Run'}</span>
     </button>
-  );
-};
+  )
+}

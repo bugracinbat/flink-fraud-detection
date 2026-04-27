@@ -1,37 +1,51 @@
-import React from 'react';
-
-const icons = {
-  VelocityFraud: '🌍',
-  SequentialDialing: '📞',
-  StaticalRule: '📊',
-  CallForwardingDistance: '🔄'
-};
-
-const labels = {
-  VelocityFraud: 'SIM Clone / Velocity',
-  SequentialDialing: 'Sequential Dialing',
-  StaticalRule: 'Statical Anomaly',
-  CallForwardingDistance: 'Distance Forwarding'
-};
+const alertMeta = {
+  VELOCITY_FRAUD_SIM_CLONE: {
+    label: 'SIM Clone Velocity',
+    accent: 'velocity',
+    shortCode: 'VL',
+  },
+  SEQUENTIAL_DIALING: {
+    label: 'Sequential Dialing',
+    accent: 'sequential',
+    shortCode: 'SQ',
+  },
+  STATICAL_RULE_FRAUD: {
+    label: 'Static Rule Fraud',
+    accent: 'static',
+    shortCode: 'ST',
+  },
+  DISTANCE_FORWARDING_FRAUD: {
+    label: 'Forwarding Fan-out',
+    accent: 'forwarding',
+    shortCode: 'FW',
+  },
+}
 
 export const AlertCard = ({ alert }) => {
-  const time = new Date(alert.timestamp).toLocaleTimeString();
-  const icon = icons[alert.fraudType] || '⚠️';
-  const label = labels[alert.fraudType] || alert.fraudType;
+  const meta = alertMeta[alert.fraudType] || {
+    label: alert.fraudType,
+    accent: 'unknown',
+    shortCode: '!',
+  }
+  const time = new Date(alert.timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 
   return (
-    <div className="alert-card" data-type={alert.fraudType}>
-      <div className="alert-icon">
-        {icon}
+    <article className="alert-card" data-accent={meta.accent}>
+      <div className="alert-icon" aria-hidden="true">
+        {meta.shortCode}
       </div>
       <div className="alert-content">
         <div className="alert-header">
-          <span className="alert-type">{label}</span>
-          <span className="alert-time">{time}</span>
+          <span className="alert-type">{meta.label}</span>
+          <time className="alert-time">{time}</time>
         </div>
         <div className="alert-msisdn">{alert.msisdn}</div>
-        <div className="alert-desc">{alert.description}</div>
+        <p className="alert-desc">{alert.description}</p>
       </div>
-    </div>
-  );
-};
+    </article>
+  )
+}
