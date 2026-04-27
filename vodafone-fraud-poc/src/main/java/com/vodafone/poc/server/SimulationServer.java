@@ -46,13 +46,23 @@ public class SimulationServer {
     private static final AtomicLong eventsScheduled = new AtomicLong();
     private static final AtomicLong eventsEmitted = new AtomicLong();
     private static final AtomicLong activeRunSequence = new AtomicLong();
+    private static final AtomicLong resetGeneration = new AtomicLong();
     private static final Random random = new Random();
     private static final ScheduledExecutorService simulationExecutor = Executors.newScheduledThreadPool(4);
+    private static final DemoStep[] demoSteps = {
+            new DemoStep("NEAR_MISS_SEQUENTIAL", "LOW", "Near-miss confidence check", "Three sequential calls enter the stream. Expected result: detector stays quiet.", 0),
+            new DemoStep("SEQUENTIAL_DIALING", "LOW", "Sequential dialing fraud", "A caller moves from near-miss to a threshold-crossing sequence. Expected result: one alert.", 7000),
+            new DemoStep("SIM_CLONE", "LOW", "SIM clone velocity", "The same MSISDN appears across impossible roaming locations. Expected result: velocity alerts.", 15000),
+            new DemoStep("NEAR_MISS_STATICAL_RULE", "LOW", "Static-rule near miss", "A fresh SIM calls nine distinct numbers. Expected result: below threshold, no alert.", 23000),
+            new DemoStep("STATICAL_RULE", "LOW", "Static-rule fraud", "A fresh, low-data SIM calls enough distinct numbers to cross the SQL rule.", 31000),
+            new DemoStep("CALL_FORWARDING", "LOW", "Forwarding fan-out", "A callee redirects calls to multiple destinations. Expected result: forwarding alerts.", 41000)
+    };
     private static final ConcurrentHashMap<String, SimulationRun> activeRuns = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, SimulationRun> runsById = new ConcurrentHashMap<>();
     private static final Deque<SimulationRun> completedRuns = new ArrayDeque<>();
     private static final Map<String, String> scenarios = new LinkedHashMap<>();
     private static final int COMPLETED_RUN_HISTORY_LIMIT = 20;
+    private static volatile DemoRun activeDemo;
 
     static {
         scenarios.put("SIM_CLONE", "Location velocity pattern using impossible country jumps.");
@@ -72,6 +82,8 @@ public class SimulationServer {
         server.createContext("/api/alerts", new AlertsHandler());
         server.createContext("/api/events", new EventsHandler());
         server.createContext("/api/process-event", new ProcessEventHandler());
+        server.createContext("/api/demo", new DemoHandler());
+        server.createContext("/api/demo/reset", new DemoResetHandler());
         server.createContext("/api/status", new StatusHandler());
 
         server.setExecutor(Executors.newCachedThreadPool());
@@ -161,6 +173,17 @@ public class SimulationServer {
         streamEvent.put("msisdn", event.getMsisdn());
         streamEvent.put("location", event.getLocation());
         return streamEvent;
+    }
+
+    private static void broadcastNarration(String title, String message, String demoId, int stepIndex) {
+        Map<String, Object> streamEvent = new LinkedHashMap<>();
+        streamEvent.put("streamType", "NARRATION");
+        streamEvent.put("timestamp", System.currentTimeMillis());
+        streamEvent.put("demoId", demoId);
+        streamEvent.put("stepIndex", stepIndex);
+        streamEvent.put("title", title);
+        streamEvent.put("message", message);
+        broadcastStreamEvent(streamEvent);
     }
 
     private static SimulationProfile profileFor(String intensity) {
@@ -401,6 +424,10 @@ public class SimulationServer {
 
     private static SimulationRun schedulePlan(SimulationPlan plan) {
         String runId = plan.scenario + "-" + UUID.randomUUID().toString().substring(0, 8);
+        return schedulePlan(plan, runId);
+    }
+
+    private static SimulationRun schedulePlan(SimulationPlan plan, String runId) {
         SimulationRun run = new SimulationRun(runId, plan);
         activeRuns.put(runId, run);
         runsById.put(runId, run);
@@ -409,6 +436,10 @@ public class SimulationServer {
 
         for (ScheduledEvent event : plan.events) {
             simulationExecutor.schedule(() -> {
+                if (run.generation != resetGeneration.get()) {
+                    return;
+                }
+
                 long now = System.currentTimeMillis();
                 if (event.cdrEvent != null) {
                     CdrEvent cdr = event.cdrEvent;
@@ -436,6 +467,83 @@ public class SimulationServer {
         return run;
     }
 
+    private static synchronized DemoRun startDemo() {
+        if (activeDemo != null && activeDemo.running) {
+            return activeDemo;
+        }
+
+        DemoRun demoRun = new DemoRun("DEMO-" + UUID.randomUUID().toString().substring(0, 8), demoSteps);
+        activeDemo = demoRun;
+        broadcastNarration("Autopilot demo started", "A scripted telecom fraud story is now driving the stream.", demoRun.demoId, -1);
+
+        for (int i = 0; i < demoSteps.length; i++) {
+            final int stepIndex = i;
+            DemoStep step = demoSteps[i];
+            simulationExecutor.schedule(() -> runDemoStep(demoRun, stepIndex), step.offsetMs, TimeUnit.MILLISECONDS);
+        }
+
+        DemoStep last = demoSteps[demoSteps.length - 1];
+        simulationExecutor.schedule(() -> finishDemo(demoRun), last.offsetMs + 9000, TimeUnit.MILLISECONDS);
+        return demoRun;
+    }
+
+    private static void runDemoStep(DemoRun demoRun, int stepIndex) {
+        if (!demoRun.running) {
+            return;
+        }
+
+        DemoStep step = demoRun.steps[stepIndex];
+        demoRun.currentStep = stepIndex;
+        broadcastNarration(step.title, step.message, demoRun.demoId, stepIndex);
+        SimulationPlan plan = createPlan(step.scenario, step.intensity);
+        schedulePlan(plan, demoRun.demoId + "-" + step.scenario + "-" + (stepIndex + 1));
+    }
+
+    private static synchronized void finishDemo(DemoRun demoRun) {
+        if (activeDemo == demoRun && demoRun.running) {
+            demoRun.running = false;
+            demoRun.completedAt = System.currentTimeMillis();
+            broadcastNarration("Autopilot demo complete", "Review Run Quality for expected vs actual alert outcomes.", demoRun.demoId, demoRun.steps.length);
+        }
+    }
+
+    private static synchronized DemoRun stopDemo() {
+        if (activeDemo != null && activeDemo.running) {
+            activeDemo.running = false;
+            activeDemo.completedAt = System.currentTimeMillis();
+            broadcastNarration("Autopilot demo stopped", "The scripted demo sequence was stopped manually.", activeDemo.demoId, activeDemo.currentStep);
+        }
+        return activeDemo;
+    }
+
+    private static synchronized Map<String, Object> resetDemoState() {
+        if (activeDemo != null) {
+            activeDemo.running = false;
+            activeDemo.completedAt = System.currentTimeMillis();
+        }
+
+        resetGeneration.incrementAndGet();
+        activeDemo = null;
+        cdrQueue.clear();
+        locationQueue.clear();
+        activeRuns.clear();
+        runsById.clear();
+        completedRuns.clear();
+        simulationsTriggered.set(0);
+        alertsBroadcast.set(0);
+        eventsScheduled.set(0);
+        eventsEmitted.set(0);
+        activeRunSequence.set(0);
+
+        broadcastNarration("Demo state reset", "Queues, run history, counters, and the scripted demo state were cleared.", null, -1);
+
+        Map<String, Object> status = new LinkedHashMap<>();
+        status.put("status", "reset");
+        status.put("running", false);
+        status.put("steps", demoStepStatuses(null));
+        return status;
+    }
+
     private static synchronized void recordCompletedRun(SimulationRun run) {
         completedRuns.remove(run);
         completedRuns.addFirst(run);
@@ -447,7 +555,7 @@ public class SimulationServer {
 
     private static boolean handleCors(HttpExchange exchange) throws IOException {
         exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
-        exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
         exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type");
         if (exchange.getRequestMethod().equalsIgnoreCase("OPTIONS")) {
             exchange.sendResponseHeaders(204, -1);
@@ -531,6 +639,7 @@ public class SimulationServer {
             status.put("eventsEmitted", eventsEmitted.get());
             status.put("activeRuns", runs);
             status.put("completedRuns", history);
+            status.put("demo", activeDemo != null ? activeDemo.toStatus() : null);
             status.put("scenarios", scenarios);
             sendJson(exchange, 200, status);
         }
@@ -634,6 +743,73 @@ public class SimulationServer {
         }
     }
 
+    static class DemoHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (handleCors(exchange)) return;
+
+            if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendJson(exchange, 200, activeDemo != null ? activeDemo.toStatus() : Map.of("running", false, "steps", demoStepStatuses(null)));
+                return;
+            }
+
+            if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                DemoRun demoRun = startDemo();
+                sendJson(exchange, 202, demoRun.toStatus());
+                return;
+            }
+
+            if ("DELETE".equalsIgnoreCase(exchange.getRequestMethod())) {
+                DemoRun demoRun = stopDemo();
+                sendJson(exchange, 200, demoRun != null ? demoRun.toStatus() : Map.of("running", false, "steps", demoStepStatuses(null)));
+                return;
+            }
+
+            sendJson(exchange, 405, Map.of("status", "error", "message", "Method not allowed"));
+        }
+    }
+
+    static class DemoResetHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (handleCors(exchange)) return;
+
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendJson(exchange, 405, Map.of("status", "error", "message", "Method not allowed"));
+                return;
+            }
+
+            sendJson(exchange, 200, resetDemoState());
+        }
+    }
+
+    private static List<Map<String, Object>> demoStepStatuses(DemoRun demoRun) {
+        List<Map<String, Object>> statuses = new ArrayList<>();
+        for (int i = 0; i < demoSteps.length; i++) {
+            DemoStep step = demoSteps[i];
+            Map<String, Object> status = new LinkedHashMap<>();
+            status.put("index", i);
+            status.put("scenario", step.scenario);
+            status.put("intensity", step.intensity);
+            status.put("title", step.title);
+            status.put("message", step.message);
+            status.put("offsetMs", step.offsetMs);
+            if (demoRun == null) {
+                status.put("state", "pending");
+            } else if (!demoRun.running && demoRun.completedAt > 0 && i <= demoRun.currentStep) {
+                status.put("state", "completed");
+            } else if (i < demoRun.currentStep) {
+                status.put("state", "completed");
+            } else if (i == demoRun.currentStep && demoRun.running) {
+                status.put("state", "active");
+            } else {
+                status.put("state", "pending");
+            }
+            statuses.add(status);
+        }
+        return statuses;
+    }
+
     private static class SimulationProfile {
         private final String intensity;
         private final int sequentialCalls;
@@ -690,6 +866,7 @@ public class SimulationServer {
         private final int backgroundCdrEvents;
         private final int backgroundLocationEvents;
         private final int expectedAlerts;
+        private final long generation;
         private final AtomicInteger emittedEvents = new AtomicInteger();
         private final AtomicInteger actualAlerts = new AtomicInteger();
         private volatile long completedAt;
@@ -708,6 +885,7 @@ public class SimulationServer {
             this.backgroundCdrEvents = plan.backgroundCdrEvents;
             this.backgroundLocationEvents = plan.backgroundLocationEvents;
             this.expectedAlerts = plan.expectedAlerts;
+            this.generation = resetGeneration.get();
         }
 
         private int markEventEmitted() {
@@ -775,6 +953,57 @@ public class SimulationServer {
 
         private static ScheduledEvent location(long delayMs, LocationEvent event, boolean background) {
             return new ScheduledEvent(delayMs, null, event, background);
+        }
+    }
+
+    private static class DemoStep {
+        private final String scenario;
+        private final String intensity;
+        private final String title;
+        private final String message;
+        private final long offsetMs;
+
+        private DemoStep(String scenario, String intensity, String title, String message, long offsetMs) {
+            this.scenario = scenario;
+            this.intensity = intensity;
+            this.title = title;
+            this.message = message;
+            this.offsetMs = offsetMs;
+        }
+    }
+
+    private static class DemoRun {
+        private final String demoId;
+        private final long startedAt;
+        private final DemoStep[] steps;
+        private volatile boolean running = true;
+        private volatile int currentStep = -1;
+        private volatile long completedAt;
+
+        private DemoRun(String demoId, DemoStep[] steps) {
+            this.demoId = demoId;
+            this.steps = steps;
+            this.startedAt = System.currentTimeMillis();
+        }
+
+        private Map<String, Object> toStatus() {
+            Map<String, Object> status = new LinkedHashMap<>();
+            status.put("demoId", demoId);
+            status.put("running", running);
+            status.put("startedAt", startedAt);
+            status.put("completedAt", completedAt > 0 ? completedAt : null);
+            status.put("currentStep", currentStep);
+            status.put("steps", demoStepStatuses(this));
+            if (running && currentStep + 1 < steps.length) {
+                long nextOffset = steps[currentStep + 1].offsetMs;
+                long nextAt = startedAt + nextOffset;
+                status.put("nextStepAt", nextAt);
+                status.put("nextStepInMs", Math.max(0, nextAt - System.currentTimeMillis()));
+            } else {
+                status.put("nextStepAt", null);
+                status.put("nextStepInMs", null);
+            }
+            return status;
         }
     }
 }

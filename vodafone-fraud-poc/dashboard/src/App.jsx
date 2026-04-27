@@ -91,6 +91,7 @@ function App() {
   const [manualTarget, setManualTarget] = useState('905337092418')
   const [manualRunId, setManualRunId] = useState('')
   const [manualMessage, setManualMessage] = useState('')
+  const [demoMessage, setDemoMessage] = useState('')
   const alertsEndRef = useRef(null)
   const streamEndRef = useRef(null)
 
@@ -237,12 +238,83 @@ function App() {
     }
   }
 
+  const handleStartDemo = async () => {
+    setDemoMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/demo`, { method: 'POST' })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.message || 'Could not start demo')
+      setServerStatus((current) => current ? { ...current, demo: payload } : current)
+      setDemoMessage('Autopilot demo started')
+    } catch (error) {
+      setDemoMessage(error.message)
+    }
+  }
+
+  const handleStopDemo = async () => {
+    setDemoMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/demo`, { method: 'DELETE' })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.message || 'Could not stop demo')
+      setServerStatus((current) => current ? { ...current, demo: payload } : current)
+      setDemoMessage('Autopilot demo stopped')
+    } catch (error) {
+      setDemoMessage(error.message)
+    }
+  }
+
+  const handleResetDemo = async () => {
+    setDemoMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/demo/reset`, { method: 'POST' })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.message || 'Could not reset demo state')
+      setAlerts([])
+      setStreamEvents([])
+      setLastSimulation(null)
+      setServerStatus((current) => current ? {
+        ...current,
+        demo: payload,
+        activeRuns: [],
+        completedRuns: [],
+        queuedCdrEvents: 0,
+        queuedLocationEvents: 0,
+        simulationsTriggered: 0,
+        alertsBroadcast: 0,
+        eventsScheduled: 0,
+        eventsEmitted: 0,
+      } : current)
+      setDemoMessage('Demo state reset')
+    } catch (error) {
+      setDemoMessage(error.message)
+    }
+  }
+
   const activeRuns = serverStatus?.activeRuns ?? []
   const completedRuns = serverStatus?.completedRuns ?? []
   const matchedRuns = completedRuns.filter((run) => run.expectedAlerts === run.actualAlerts).length
   const detectionScore = completedRuns.length > 0 ? Math.round((matchedRuns / completedRuns.length) * 100) : 0
   const emitted = serverStatus?.eventsEmitted ?? 0
   const scheduled = serverStatus?.eventsScheduled ?? 0
+  const demo = serverStatus?.demo
+  const demoSteps = demo?.steps ?? []
+  const demoRunning = Boolean(demo?.running)
+  const activeDemoStep = demoSteps.find((step) => step.state === 'active') ?? null
+  const nextDemoStep = demoSteps.find((step) => step.state === 'pending') ?? null
+  const demoRunPrefix = demo?.demoId && activeDemoStep ? `${demo.demoId}-${activeDemoStep.scenario}` : ''
+  const storyRun = demoRunPrefix
+    ? [...activeRuns, ...completedRuns].find((run) => run.runId.startsWith(demoRunPrefix))
+    : null
+  const highlightedRunIds = new Set((demo?.demoId ? activeRuns : [])
+    .filter((run) => run.runId.startsWith(demo.demoId))
+    .map((run) => run.runId))
+  if (storyRun) highlightedRunIds.add(storyRun.runId)
+  const storyVerdict = storyRun
+    ? `${verdictFor(storyRun)} · ${storyRun.actualAlerts}/${storyRun.expectedAlerts} alerts`
+    : demoRunning
+      ? 'Waiting for this run to emit'
+      : 'Ready'
   const streamRate = streamBuckets.slice(-5).reduce((sum, bucket) => sum + bucket.total, 0) / 5
   const statusLabel = connectionState === 'connected' && eventState === 'connected'
     ? 'Streams connected'
@@ -326,6 +398,47 @@ function App() {
         </section>
 
         <section className="feed-panel">
+          <section className="demo-panel">
+            <div className="feed-toolbar">
+              <div>
+                <h2>Autopilot Demo</h2>
+                <p>{demoRunning ? `Next step in ${formatUptime(demo.nextStepInMs ?? 0)}` : 'Run a scripted demo with narration markers and expected outcomes.'}</p>
+              </div>
+              <div className="stream-controls">
+                <button type="button" className={demoRunning ? 'active' : ''} onClick={handleStartDemo} disabled={demoRunning}>Start Demo</button>
+                <button type="button" onClick={handleStopDemo} disabled={!demoRunning}>Stop</button>
+                <button type="button" onClick={handleResetDemo}>Reset</button>
+              </div>
+            </div>
+            <div className="story-panel">
+              <div>
+                <span>Active story</span>
+                <strong>{activeDemoStep?.title ?? (demoRunning ? 'Preparing next chapter' : 'Ready for scripted demo')}</strong>
+                <p>{activeDemoStep?.message ?? 'Start the autopilot to show near misses, fraud escalation, and alert quality as one guided stream.'}</p>
+              </div>
+              <div>
+                <span>Current run</span>
+                <strong>{storyRun?.scenario.replaceAll('_', ' ') ?? 'No active run'}</strong>
+                <p>{storyRun ? `${storyRun.emittedEvents}/${storyRun.totalEvents} events emitted · ${storyRun.intensity}` : 'Rows will highlight as the active scenario enters the stream.'}</p>
+              </div>
+              <div>
+                <span>Expected vs actual</span>
+                <strong>{storyVerdict}</strong>
+                <p>{nextDemoStep ? `Next: ${nextDemoStep.title}` : demoRunning ? 'Finishing scripted sequence' : 'Timeline is reset and ready.'}</p>
+              </div>
+            </div>
+            <div className="demo-timeline">
+              {demoSteps.map((step) => (
+                <div className="demo-step" data-state={step.state} key={`${step.index}-${step.scenario}`}>
+                  <span>{step.index + 1}</span>
+                  <strong>{step.title}</strong>
+                  <small>{step.scenario.replaceAll('_', ' ')}</small>
+                </div>
+              ))}
+            </div>
+            {demoMessage && <p className="manual-message">{demoMessage}</p>}
+          </section>
+
           <div className="pipeline-strip">
             {['Simulation', 'Sources', 'Detectors', 'Alert Sink', 'Dashboard'].map((stage, index) => (
               <div className={activeRuns.length > 0 || visibleStreamEvents.length > 0 ? 'active' : ''} key={stage}>
@@ -422,7 +535,7 @@ function App() {
             <div className="active-runs">
               <span>Active runs</span>
               {activeRuns.map((run) => (
-                <div className="run-progress" key={run.runId}>
+                <div className={`run-progress ${highlightedRunIds.has(run.runId) ? 'highlighted' : ''}`} key={run.runId}>
                   <div>
                     <strong>{run.scenario.replaceAll('_', ' ')}</strong>
                     <small>{run.emittedEvents}/{run.totalEvents} · {run.actualAlerts}/{run.expectedAlerts} alerts</small>
@@ -451,19 +564,23 @@ function App() {
               {visibleStreamEvents.length === 0 ? (
                 <div className="stream-empty">Waiting for stream events...</div>
               ) : (
-                visibleStreamEvents.map((event, index) => (
-                  <div className="stream-row" data-type={event.streamType} key={`${event.timestamp}-${index}`}>
-                    <time>{new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time>
-                    <span className="stream-type">{event.streamType}</span>
-                    <span className="stream-main">
-                      {event.streamType === 'CDR' && `${event.msisdn} -> ${event.callee}`}
-                      {event.streamType === 'LOCATION' && `${event.msisdn} @ ${event.location}`}
-                      {event.streamType === 'ALERT' && `${event.fraudType} · ${event.msisdn}`}
-                    </span>
-                    <span className="stream-run">{event.runId || 'no-run'}</span>
-                    <span className="stream-source">{event.background ? 'noise' : event.source || 'signal'}</span>
-                  </div>
-                ))
+                visibleStreamEvents.map((event, index) => {
+                  const highlighted = Boolean(event.runId && highlightedRunIds.has(event.runId))
+                  return (
+                    <div className={`stream-row ${highlighted ? 'highlighted' : ''}`} data-type={event.streamType} key={`${event.timestamp}-${index}`}>
+                      <time>{new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time>
+                      <span className="stream-type">{event.streamType}</span>
+                      <span className="stream-main">
+                        {event.streamType === 'CDR' && `${event.msisdn} -> ${event.callee}`}
+                        {event.streamType === 'LOCATION' && `${event.msisdn} @ ${event.location}`}
+                        {event.streamType === 'ALERT' && `${event.fraudType} · ${event.msisdn}`}
+                        {event.streamType === 'NARRATION' && `${event.title}: ${event.message}`}
+                      </span>
+                      <span className="stream-run">{event.runId || event.demoId || 'no-run'}</span>
+                      <span className="stream-source">{event.background ? 'noise' : event.source || 'signal'}</span>
+                    </div>
+                  )
+                })
               )}
               <div ref={streamEndRef} />
             </div>
