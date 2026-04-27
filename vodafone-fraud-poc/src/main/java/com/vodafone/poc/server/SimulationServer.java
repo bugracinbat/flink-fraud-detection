@@ -8,6 +8,7 @@ import com.sun.net.httpserver.HttpServer;
 import com.vodafone.poc.event.CdrEvent;
 import com.vodafone.poc.event.FraudAlert;
 import com.vodafone.poc.event.LocationEvent;
+import com.vodafone.poc.generator.TelecomData;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -37,6 +38,7 @@ public class SimulationServer {
     public static final ConcurrentLinkedQueue<CdrEvent> cdrQueue = new ConcurrentLinkedQueue<>();
     public static final ConcurrentLinkedQueue<LocationEvent> locationQueue = new ConcurrentLinkedQueue<>();
     private static final CopyOnWriteArrayList<HttpExchange> sseClients = new CopyOnWriteArrayList<>();
+    private static final CopyOnWriteArrayList<HttpExchange> eventClients = new CopyOnWriteArrayList<>();
     private static final Gson gson = new Gson();
     private static final long startedAt = System.currentTimeMillis();
     private static final AtomicLong simulationsTriggered = new AtomicLong();
@@ -68,6 +70,8 @@ public class SimulationServer {
 
         server.createContext("/api/simulate", new SimulateHandler());
         server.createContext("/api/alerts", new AlertsHandler());
+        server.createContext("/api/events", new EventsHandler());
+        server.createContext("/api/process-event", new ProcessEventHandler());
         server.createContext("/api/status", new StatusHandler());
 
         server.setExecutor(Executors.newCachedThreadPool());
@@ -91,6 +95,15 @@ public class SimulationServer {
                 sseClients.remove(client);
             }
         }
+
+        Map<String, Object> streamEvent = new LinkedHashMap<>();
+        streamEvent.put("streamType", "ALERT");
+        streamEvent.put("timestamp", alert.getTimestamp());
+        streamEvent.put("runId", alert.getRunId());
+        streamEvent.put("msisdn", alert.getMsisdn());
+        streamEvent.put("fraudType", alert.getFraudType());
+        streamEvent.put("description", alert.getDescription());
+        broadcastStreamEvent(streamEvent);
     }
 
     private static void recordActualAlert(FraudAlert alert) {
@@ -103,6 +116,51 @@ public class SimulationServer {
         if (run != null) {
             run.markAlert(alert);
         }
+    }
+
+    private static void broadcastStreamEvent(Map<String, Object> event) {
+        String json = gson.toJson(event);
+        String sseData = "data: " + json + "\n\n";
+        byte[] bytes = sseData.getBytes(StandardCharsets.UTF_8);
+
+        for (HttpExchange client : eventClients) {
+            try {
+                OutputStream os = client.getResponseBody();
+                os.write(bytes);
+                os.flush();
+            } catch (IOException e) {
+                eventClients.remove(client);
+            }
+        }
+    }
+
+    private static Map<String, Object> cdrStreamEvent(CdrEvent event, boolean background, String source) {
+        Map<String, Object> streamEvent = new LinkedHashMap<>();
+        streamEvent.put("streamType", "CDR");
+        streamEvent.put("timestamp", event.getTimestamp());
+        streamEvent.put("runId", event.getRunId());
+        streamEvent.put("source", source);
+        streamEvent.put("background", background);
+        streamEvent.put("msisdn", event.getMsisdn());
+        streamEvent.put("callee", event.getCallee());
+        streamEvent.put("duration", event.getDuration());
+        streamEvent.put("forwardedTo", event.getForwardedTo());
+        streamEvent.put("cellSite", event.getCellSite());
+        streamEvent.put("dataUsageMb", event.getDataUsageMb());
+        streamEvent.put("simAgeDays", event.getSimAgeDays());
+        return streamEvent;
+    }
+
+    private static Map<String, Object> locationStreamEvent(LocationEvent event, boolean background, String source) {
+        Map<String, Object> streamEvent = new LinkedHashMap<>();
+        streamEvent.put("streamType", "LOCATION");
+        streamEvent.put("timestamp", event.getTimestamp());
+        streamEvent.put("runId", event.getRunId());
+        streamEvent.put("source", source);
+        streamEvent.put("background", background);
+        streamEvent.put("msisdn", event.getMsisdn());
+        streamEvent.put("location", event.getLocation());
+        return streamEvent;
     }
 
     private static SimulationProfile profileFor(String intensity) {
@@ -212,82 +270,81 @@ public class SimulationServer {
     }
 
     private static void addSimCloneEvents(List<ScheduledEvent> events, SimulationProfile profile) {
-        String msisdn = "905559998877";
-        String[] locations = {"Germany", "Turkiye", "Netherlands", "Turkiye", "France", "Turkiye", "Spain", "Turkiye", "Italy"};
+        String msisdn = TelecomData.fraudMsisdn(0);
 
         for (int i = 0; i <= profile.simCloneJumps; i++) {
             long delay = i * profile.spacingMs;
-            String location = locations[i % locations.length];
+            String location = TelecomData.IMPOSSIBLE_ROAMING_LOCATIONS[i % TelecomData.IMPOSSIBLE_ROAMING_LOCATIONS.length];
             events.add(ScheduledEvent.location(delay, new LocationEvent(msisdn, location, 0), false));
         }
     }
 
     private static void addSequentialDialingEvents(List<ScheduledEvent> events, SimulationProfile profile) {
-        String caller = "905554443322";
-        long seqBase = 905550000000L + (activeRunSequence.incrementAndGet() * 1000);
+        String caller = TelecomData.fraudMsisdn(1);
+        long seqBase = Long.parseLong(TelecomData.sequentialCalleeBase(activeRunSequence.incrementAndGet()));
 
         for (int i = 0; i < profile.sequentialCalls; i++) {
             long delay = i * profile.spacingMs;
             String callee = String.valueOf(seqBase + i);
-            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, callee, 0, 5, null, "Cell-B", "IMEI-2", 50.0, 100), false));
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, callee, 0, 4 + random.nextInt(8), null, TelecomData.cellSite(random), TelecomData.imei(random), TelecomData.dataUsageMb(random), 180 + random.nextInt(900)), false));
         }
     }
 
     private static void addStaticRuleEvents(List<ScheduledEvent> events, SimulationProfile profile) {
-        String caller = "905553332211";
-        long calleeBase = 905559990000L + (activeRunSequence.incrementAndGet() * 1000);
+        String caller = TelecomData.fraudMsisdn(2);
+        long calleeBase = 905549900000L + (activeRunSequence.incrementAndGet() * 1000);
 
         for (int i = 0; i < profile.staticDistinctCallees; i++) {
             long delay = i * profile.spacingMs;
-            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, String.valueOf(calleeBase + i), 0, 30, null, "Cell-C", "IMEI-3", 2.5, 2), false));
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, String.valueOf(calleeBase + i), 0, 18 + random.nextInt(45), null, TelecomData.cellSite(random), TelecomData.imei(random), 0.2 + random.nextDouble() * 3.5, 1 + random.nextInt(3)), false));
         }
     }
 
     private static void addCallForwardingEvents(List<ScheduledEvent> events, SimulationProfile profile) {
-        String callerA = "905551111111";
-        String calleeB = "905552222222";
-        long forwardedBase = 905558888000L + (activeRunSequence.incrementAndGet() * 1000);
+        String callerA = TelecomData.fraudMsisdn(3);
+        String calleeB = TelecomData.fraudMsisdn(4);
+        long forwardedBase = 905428880000L + (activeRunSequence.incrementAndGet() * 1000);
 
         for (int i = 0; i < profile.forwardingCalls; i++) {
             long delay = i * profile.spacingMs;
             String forwardedTo = String.valueOf(forwardedBase + i);
-            events.add(ScheduledEvent.cdr(delay, new CdrEvent(callerA, calleeB, 0, 0, forwardedTo, "Cell-D", "IMEI-4", 200.0, 500), false));
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(callerA, calleeB, 0, 0, forwardedTo, TelecomData.cellSite(random), TelecomData.imei(random), TelecomData.dataUsageMb(random), 500 + random.nextInt(1200)), false));
         }
     }
 
     private static void addNearMissSimCloneEvents(List<ScheduledEvent> events, SimulationProfile profile) {
-        String msisdn = "905559998866";
+        String msisdn = TelecomData.fraudMsisdn(5);
         for (int i = 0; i < 3; i++) {
             long delay = i * profile.spacingMs;
-            events.add(ScheduledEvent.location(delay, new LocationEvent(msisdn, "Istanbul", 0), false));
+            events.add(ScheduledEvent.location(delay, new LocationEvent(msisdn, "Istanbul/Kadikoy", 0), false));
         }
     }
 
     private static void addNearMissSequentialEvents(List<ScheduledEvent> events, SimulationProfile profile) {
-        String caller = "905554443311";
+        String caller = TelecomData.fraudMsisdn(5);
         long seqBase = 905550900000L + (activeRunSequence.incrementAndGet() * 1000);
         for (int i = 0; i < 3; i++) {
             long delay = i * profile.spacingMs;
-            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, String.valueOf(seqBase + i), 0, 6, null, "Cell-NM", "IMEI-NM1", 40.0, 120), false));
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, String.valueOf(seqBase + i), 0, 5 + random.nextInt(12), null, TelecomData.cellSite(random), TelecomData.imei(random), 35.0, 120), false));
         }
     }
 
     private static void addNearMissStaticRuleEvents(List<ScheduledEvent> events, SimulationProfile profile) {
-        String caller = "905553332200";
+        String caller = TelecomData.fraudMsisdn(6);
         long calleeBase = 905559880000L + (activeRunSequence.incrementAndGet() * 1000);
         for (int i = 0; i < 9; i++) {
             long delay = i * profile.spacingMs;
-            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, String.valueOf(calleeBase + i), 0, 30, null, "Cell-NM", "IMEI-NM2", 2.5, 2), false));
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, String.valueOf(calleeBase + i), 0, 20 + random.nextInt(40), null, TelecomData.cellSite(random), TelecomData.imei(random), 2.5, 2), false));
         }
     }
 
     private static void addNearMissCallForwardingEvents(List<ScheduledEvent> events, SimulationProfile profile) {
-        String callerA = "905551111100";
-        String calleeB = "905552222200";
+        String callerA = TelecomData.fraudMsisdn(7);
+        String calleeB = TelecomData.turkishMobile(random);
         long forwardedBase = 905558770000L + (activeRunSequence.incrementAndGet() * 1000);
         for (int i = 0; i < 3; i++) {
             long delay = i * profile.spacingMs;
-            events.add(ScheduledEvent.cdr(delay, new CdrEvent(callerA, calleeB, 0, 0, String.valueOf(forwardedBase + i), "Cell-NM", "IMEI-NM3", 150.0, 500), false));
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(callerA, calleeB, 0, 0, String.valueOf(forwardedBase + i), TelecomData.cellSite(random), TelecomData.imei(random), 150.0, 500), false));
         }
     }
 
@@ -314,36 +371,32 @@ public class SimulationServer {
     }
 
     private static CdrEvent backgroundCdrEvent(int index) {
-        String[] callers = {"905551234567", "905552468135", "905553579246", "905554681357", "905555792468", "905556813579"};
-        String[] cellSites = {"Cell-A", "Cell-E", "Cell-F", "Cell-G", "Cell-H"};
-        String caller = callers[random.nextInt(callers.length)];
-        String callee = "90555" + (1000000 + random.nextInt(8000000));
-        long duration = 20 + random.nextInt(260);
+        String caller = TelecomData.normalMsisdn(random);
+        String callee = TelecomData.turkishMobile(random);
+        long duration = TelecomData.voiceDurationSeconds(random);
         String forwardedTo = null;
-        double dataUsage = 20.0 + random.nextInt(900);
-        int simAge = 30 + random.nextInt(900);
+        double dataUsage = TelecomData.dataUsageMb(random);
+        int simAge = TelecomData.simAgeDays(random);
 
         if (index % 9 == 0) {
             duration = 0; // Dropped or missed call.
         } else if (index % 11 == 0) {
             duration = 0;
-            callee = "DATA_SESSION_" + random.nextInt(1000);
-            dataUsage = 80.0 + random.nextInt(1200);
+            callee = "DATA";
+            dataUsage = TelecomData.roundOneDecimal(180.0 + random.nextDouble() * 2000.0);
         } else if (index % 13 == 0) {
-            forwardedTo = "905557" + (100000 + random.nextInt(800000));
+            forwardedTo = TelecomData.turkishMobile(random);
             duration = 8 + random.nextInt(20);
         } else if (index % 7 == 0) {
             duration = 3 + random.nextInt(12);
         }
 
-        return new CdrEvent(caller, callee, 0, duration, forwardedTo, cellSites[random.nextInt(cellSites.length)], "IMEI-N" + random.nextInt(500), dataUsage, simAge);
+        return new CdrEvent(caller, callee, 0, duration, forwardedTo, TelecomData.cellSite(random), TelecomData.imei(random), dataUsage, simAge);
     }
 
     private static LocationEvent backgroundLocationEvent() {
-        String[] users = {"905557001001", "905557001002", "905557001003", "905557001004", "905557001005"};
-        String[] locations = {"Istanbul", "Ankara", "Izmir", "Bursa", "Antalya"};
-        int userIndex = random.nextInt(users.length);
-        return new LocationEvent(users[userIndex], locations[userIndex], 0);
+        int userIndex = random.nextInt(TelecomData.NORMAL_MSISDNS.length);
+        return new LocationEvent(TelecomData.NORMAL_MSISDNS[userIndex], TelecomData.homeLocation(userIndex), 0);
     }
 
     private static SimulationRun schedulePlan(SimulationPlan plan) {
@@ -362,11 +415,13 @@ public class SimulationServer {
                     cdr.setTimestamp(now);
                     cdr.setRunId(run.runId);
                     cdrQueue.offer(cdr);
+                    broadcastStreamEvent(cdrStreamEvent(cdr, event.background, "simulation"));
                 } else {
                     LocationEvent location = event.locationEvent;
                     location.setTimestamp(now);
                     location.setRunId(run.runId);
                     locationQueue.offer(location);
+                    broadcastStreamEvent(locationStreamEvent(location, event.background, "simulation"));
                 }
 
                 eventsEmitted.incrementAndGet();
@@ -467,6 +522,7 @@ public class SimulationServer {
             status.put("status", "ok");
             status.put("uptimeMs", System.currentTimeMillis() - startedAt);
             status.put("connectedClients", sseClients.size());
+            status.put("eventStreamClients", eventClients.size());
             status.put("queuedCdrEvents", cdrQueue.size());
             status.put("queuedLocationEvents", locationQueue.size());
             status.put("simulationsTriggered", simulationsTriggered.get());
@@ -496,6 +552,85 @@ public class SimulationServer {
             exchange.sendResponseHeaders(200, 0);
 
             sseClients.add(exchange);
+        }
+    }
+
+    static class EventsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (handleCors(exchange)) return;
+
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendJson(exchange, 405, Map.of("status", "error", "message", "Method not allowed"));
+                return;
+            }
+
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.getResponseHeaders().add("Cache-Control", "no-cache");
+            exchange.getResponseHeaders().add("Connection", "keep-alive");
+            exchange.sendResponseHeaders(200, 0);
+
+            eventClients.add(exchange);
+        }
+    }
+
+    static class ProcessEventHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (handleCors(exchange)) return;
+
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendJson(exchange, 405, Map.of("status", "error", "message", "Method not allowed"));
+                return;
+            }
+
+            InputStreamReader isr = new InputStreamReader(exchange.getRequestBody(), StandardCharsets.UTF_8);
+            JsonObject jsonObject = gson.fromJson(isr, JsonObject.class);
+            if (jsonObject == null || !jsonObject.has("streamType")) {
+                sendJson(exchange, 400, Map.of("status", "error", "message", "streamType is required"));
+                return;
+            }
+
+            String streamType = jsonObject.get("streamType").getAsString().toUpperCase(Locale.ROOT);
+            long now = System.currentTimeMillis();
+            String runId = jsonObject.has("runId") ? jsonObject.get("runId").getAsString() : "MANUAL-" + UUID.randomUUID().toString().substring(0, 8);
+
+            if ("CDR".equals(streamType)) {
+                String msisdn = jsonObject.has("msisdn") ? jsonObject.get("msisdn").getAsString() : TelecomData.normalMsisdn(random);
+                String callee = jsonObject.has("callee") ? jsonObject.get("callee").getAsString() : TelecomData.turkishMobile(random);
+                long duration = jsonObject.has("duration") ? jsonObject.get("duration").getAsLong() : 30;
+                String forwardedTo = jsonObject.has("forwardedTo") && !jsonObject.get("forwardedTo").isJsonNull() ? jsonObject.get("forwardedTo").getAsString() : null;
+                String cellSite = jsonObject.has("cellSite") ? jsonObject.get("cellSite").getAsString() : TelecomData.cellSite(random);
+                String imei = jsonObject.has("imei") ? jsonObject.get("imei").getAsString() : TelecomData.imei(random);
+                double dataUsageMb = jsonObject.has("dataUsageMb") ? jsonObject.get("dataUsageMb").getAsDouble() : TelecomData.dataUsageMb(random);
+                int simAgeDays = jsonObject.has("simAgeDays") ? jsonObject.get("simAgeDays").getAsInt() : TelecomData.simAgeDays(random);
+
+                CdrEvent event = new CdrEvent(msisdn, callee, now, duration, forwardedTo, cellSite, imei, dataUsageMb, simAgeDays);
+                event.setRunId(runId);
+                cdrQueue.offer(event);
+                eventsScheduled.incrementAndGet();
+                eventsEmitted.incrementAndGet();
+                Map<String, Object> streamEvent = cdrStreamEvent(event, false, "manual");
+                broadcastStreamEvent(streamEvent);
+                sendJson(exchange, 202, streamEvent);
+                return;
+            }
+
+            if ("LOCATION".equals(streamType)) {
+                String msisdn = jsonObject.has("msisdn") ? jsonObject.get("msisdn").getAsString() : TelecomData.normalMsisdn(random);
+                String location = jsonObject.has("location") ? jsonObject.get("location").getAsString() : TelecomData.normalLocation(random);
+                LocationEvent event = new LocationEvent(msisdn, location, now);
+                event.setRunId(runId);
+                locationQueue.offer(event);
+                eventsScheduled.incrementAndGet();
+                eventsEmitted.incrementAndGet();
+                Map<String, Object> streamEvent = locationStreamEvent(event, false, "manual");
+                broadcastStreamEvent(streamEvent);
+                sendJson(exchange, 202, streamEvent);
+                return;
+            }
+
+            sendJson(exchange, 400, Map.of("status", "error", "message", "streamType must be CDR or LOCATION"));
         }
     }
 

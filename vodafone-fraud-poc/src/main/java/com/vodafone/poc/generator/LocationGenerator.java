@@ -9,10 +9,6 @@ import java.util.Random;
 public class LocationGenerator implements SourceFunction<LocationEvent> {
     private volatile boolean isRunning = true;
     private final Random random = new Random();
-    private static final String[] NORMAL_USERS = {
-            "905557001001", "905557001002", "905557001003", "905557001004", "905557001005"
-    };
-    private static final String[] LOCATIONS = {"Istanbul", "Ankara", "Izmir", "Bursa", "Antalya"};
 
     @Override
     public void run(SourceContext<LocationEvent> ctx) throws Exception {
@@ -35,9 +31,9 @@ public class LocationGenerator implements SourceFunction<LocationEvent> {
     }
 
     private LocationEvent createBackgroundEvent(long timestamp) {
-        int userIndex = random.nextInt(NORMAL_USERS.length);
-        String msisdn = NORMAL_USERS[userIndex];
-        String location = LOCATIONS[userIndex];
+        int userIndex = random.nextInt(TelecomData.NORMAL_MSISDNS.length);
+        String msisdn = TelecomData.NORMAL_MSISDNS[userIndex];
+        String location = TelecomData.homeLocation(userIndex);
         return new LocationEvent(msisdn, location, timestamp);
     }
 

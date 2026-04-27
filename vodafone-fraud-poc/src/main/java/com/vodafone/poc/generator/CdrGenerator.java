@@ -9,10 +9,6 @@ import java.util.Random;
 public class CdrGenerator implements SourceFunction<CdrEvent> {
     private volatile boolean isRunning = true;
     private final Random random = new Random();
-    private static final String[] NORMAL_CALLERS = {
-            "905551234567", "905552468135", "905553579246", "905554681357", "905555792468", "905556813579"
-    };
-    private static final String[] CELL_SITES = {"Cell-A", "Cell-E", "Cell-F", "Cell-G", "Cell-H"};
 
     @Override
     public void run(SourceContext<CdrEvent> ctx) throws Exception {
@@ -35,22 +31,22 @@ public class CdrGenerator implements SourceFunction<CdrEvent> {
     }
 
     private CdrEvent createBackgroundEvent(long timestamp, int counter) {
-        String caller = NORMAL_CALLERS[random.nextInt(NORMAL_CALLERS.length)];
-        String callee = "90555" + (1000000 + random.nextInt(8000000));
-        long duration = 20 + random.nextInt(260);
+        String caller = TelecomData.normalMsisdn(random);
+        String callee = TelecomData.turkishMobile(random);
+        long duration = TelecomData.voiceDurationSeconds(random);
         String forwardedTo = null;
-        double dataUsageMb = 15.0 + random.nextInt(900);
-        int simAgeDays = 30 + random.nextInt(900);
+        double dataUsageMb = TelecomData.dataUsageMb(random);
+        int simAgeDays = TelecomData.simAgeDays(random);
 
         if (counter % 35 == 0) {
             duration = 0;
         } else if (counter % 49 == 0) {
             duration = 0;
-            callee = "DATA_SESSION_" + random.nextInt(1000);
-            dataUsageMb = 100.0 + random.nextInt(1400);
+            callee = "DATA";
+            dataUsageMb = TelecomData.roundOneDecimal(250.0 + random.nextDouble() * 1800.0);
         } else if (counter % 67 == 0) {
             duration = 8 + random.nextInt(18);
-            forwardedTo = "905557" + (100000 + random.nextInt(800000));
+            forwardedTo = TelecomData.turkishMobile(random);
         } else if (counter % 23 == 0) {
             duration = 3 + random.nextInt(12);
         }
@@ -61,8 +57,8 @@ public class CdrGenerator implements SourceFunction<CdrEvent> {
                 timestamp,
                 duration,
                 forwardedTo,
-                CELL_SITES[random.nextInt(CELL_SITES.length)],
-                "IMEI-N" + random.nextInt(500),
+                TelecomData.cellSite(random),
+                TelecomData.imei(random),
                 dataUsageMb,
                 simAgeDays
         );

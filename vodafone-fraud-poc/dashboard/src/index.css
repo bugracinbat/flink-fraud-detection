@@ -129,6 +129,11 @@ button {
   margin: 0 auto;
 }
 
+.main-content.stream-layout {
+  grid-template-columns: minmax(310px, 380px) minmax(0, 1fr);
+  max-width: 1680px;
+}
+
 .control-panel,
 .feed-panel {
   display: flex;
@@ -303,6 +308,92 @@ button {
   font-weight: 800;
 }
 
+.manual-event {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.95rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--surface);
+}
+
+.manual-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+}
+
+.manual-grid label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.manual-grid input,
+.manual-grid select {
+  width: 100%;
+  min-height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  padding: 0 0.6rem;
+}
+
+.process-btn {
+  min-height: 38px;
+  border: 1px solid rgba(230, 0, 0, 0.5);
+  border-radius: 8px;
+  background: rgba(230, 0, 0, 0.16);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.manual-message {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.pipeline-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.pipeline-strip div {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 42px;
+  padding: 0 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.pipeline-strip div.active {
+  border-color: rgba(56, 189, 248, 0.35);
+  color: var(--text-primary);
+}
+
+.pipeline-strip span {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(56, 189, 248, 0.16);
+  color: var(--sequential);
+}
+
 .simulation-receipt,
 .active-runs {
   padding: 0.85rem;
@@ -384,6 +475,88 @@ button {
   gap: 0.75rem;
 }
 
+.charts-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(220px, 0.8fr) minmax(220px, 0.8fr);
+  gap: 0.75rem;
+}
+
+.chart-panel,
+.stream-console {
+  padding: 0.95rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--surface);
+  box-shadow: 0 10px 22px var(--shadow-color);
+}
+
+.bar-chart {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: end;
+  gap: 0.35rem;
+  height: 150px;
+  padding-top: 0.8rem;
+}
+
+.bar-column {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 0.35rem;
+  height: 100%;
+  min-width: 0;
+}
+
+.bar-column span {
+  align-self: end;
+  min-height: 4px;
+  border-radius: 6px 6px 0 0;
+  background: linear-gradient(180deg, var(--sequential), rgba(56, 189, 248, 0.18));
+}
+
+.bar-column small {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.mix-list {
+  display: grid;
+  gap: 0.65rem;
+  padding-top: 0.85rem;
+}
+
+.mix-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.mix-row span,
+.mix-row strong {
+  font-size: 0.76rem;
+}
+
+.mix-row span {
+  color: var(--text-secondary);
+}
+
+.mix-row div {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.mix-row i {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: inherit;
+  background: var(--accent-color);
+}
+
 .metric {
   min-height: 88px;
   padding: 0.95rem;
@@ -405,6 +578,29 @@ button {
   align-items: end;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.stream-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.stream-controls button {
+  min-height: 34px;
+  padding: 0 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.stream-controls button.active {
+  background: #f7f8fa;
+  color: #16191f;
 }
 
 .feed-toolbar.compact {
@@ -535,6 +731,87 @@ button {
   max-height: calc(100vh - 300px);
   min-height: 360px;
   padding-right: 0.35rem;
+}
+
+.stream-tape {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-height: 420px;
+  min-height: 280px;
+  margin-top: 0.9rem;
+  overflow-y: auto;
+  border-radius: 8px;
+  background: #0d1014;
+  padding: 0.45rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.stream-row {
+  display: grid;
+  grid-template-columns: 78px 72px minmax(180px, 1fr) minmax(150px, 0.7fr) 68px;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 34px;
+  padding: 0 0.55rem;
+  border-left: 3px solid var(--text-muted);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  animation: rowFlash 0.42s ease-out;
+}
+
+.stream-row[data-type="CDR"] {
+  border-left-color: var(--sequential);
+}
+
+.stream-row[data-type="LOCATION"] {
+  border-left-color: var(--velocity);
+}
+
+.stream-row[data-type="ALERT"] {
+  border-left-color: var(--accent-color);
+  background: rgba(230, 0, 0, 0.12);
+  color: var(--text-primary);
+}
+
+@keyframes rowFlash {
+  from {
+    background: rgba(255, 255, 255, 0.16);
+  }
+  to {
+    background: rgba(255, 255, 255, 0.035);
+  }
+}
+
+.stream-type {
+  color: var(--text-primary);
+  font-weight: 900;
+}
+
+.stream-main,
+.stream-run {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-source {
+  justify-self: end;
+  padding: 0.16rem 0.38rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-muted);
+}
+
+.stream-empty {
+  display: grid;
+  place-items: center;
+  min-height: 230px;
+  color: var(--text-muted);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.9rem;
 }
 
 .alerts-container::-webkit-scrollbar {
@@ -686,6 +963,20 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .charts-grid,
+  .pipeline-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .stream-row {
+    grid-template-columns: 70px 64px minmax(0, 1fr);
+  }
+
+  .stream-run,
+  .stream-source {
+    display: none;
+  }
+
   .alerts-container {
     max-height: none;
   }
@@ -702,6 +993,10 @@ button {
   }
 
   .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .manual-grid {
     grid-template-columns: 1fr;
   }
 

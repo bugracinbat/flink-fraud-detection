@@ -5,70 +5,14 @@ import { SimulateButton } from './components/SimulateButton'
 const API_BASE_URL = 'http://localhost:8080'
 
 const scenarios = [
-  {
-    id: 'SIM_CLONE',
-    title: 'SIM Clone Velocity',
-    detector: 'VELOCITY_FRAUD_SIM_CLONE',
-    accent: 'velocity',
-    kind: 'Fraud',
-    description: 'Same subscriber appears in Germany, then Turkiye five minutes later.',
-  },
-  {
-    id: 'SEQUENTIAL_DIALING',
-    title: 'Sequential Dialing',
-    detector: 'SEQUENTIAL_DIALING',
-    accent: 'sequential',
-    kind: 'Fraud',
-    description: 'One caller rapidly dials incrementing destination numbers.',
-  },
-  {
-    id: 'STATICAL_RULE',
-    title: 'Static Rule Anomaly',
-    detector: 'STATICAL_RULE_FRAUD',
-    accent: 'static',
-    kind: 'Fraud',
-    description: 'A fresh SIM with low data usage calls many distinct numbers.',
-  },
-  {
-    id: 'CALL_FORWARDING',
-    title: 'Forwarding Fan-out',
-    detector: 'DISTANCE_FORWARDING_FRAUD',
-    accent: 'forwarding',
-    kind: 'Fraud',
-    description: 'A callee redirects several short calls to different numbers.',
-  },
-  {
-    id: 'NEAR_MISS_SIM_CLONE',
-    title: 'Near Miss: Location',
-    detector: null,
-    accent: 'velocity',
-    kind: 'Near miss',
-    description: 'Repeated benign location pings that should stay quiet.',
-  },
-  {
-    id: 'NEAR_MISS_SEQUENTIAL',
-    title: 'Near Miss: Sequence',
-    detector: null,
-    accent: 'sequential',
-    kind: 'Near miss',
-    description: 'Only three sequential calls, below the alert threshold.',
-  },
-  {
-    id: 'NEAR_MISS_STATICAL_RULE',
-    title: 'Near Miss: Static Rule',
-    detector: null,
-    accent: 'static',
-    kind: 'Near miss',
-    description: 'Nine distinct callees, one short of the SQL rule.',
-  },
-  {
-    id: 'NEAR_MISS_CALL_FORWARDING',
-    title: 'Near Miss: Forwarding',
-    detector: null,
-    accent: 'forwarding',
-    kind: 'Near miss',
-    description: 'Three forwarded destinations, below the forwarding threshold.',
-  },
+  { id: 'SIM_CLONE', title: 'SIM Clone Velocity', detector: 'VELOCITY_FRAUD_SIM_CLONE', accent: 'velocity', kind: 'Fraud', description: 'Same subscriber appears in Germany, then Turkiye five minutes later.' },
+  { id: 'SEQUENTIAL_DIALING', title: 'Sequential Dialing', detector: 'SEQUENTIAL_DIALING', accent: 'sequential', kind: 'Fraud', description: 'One caller rapidly dials incrementing destination numbers.' },
+  { id: 'STATICAL_RULE', title: 'Static Rule Anomaly', detector: 'STATICAL_RULE_FRAUD', accent: 'static', kind: 'Fraud', description: 'A fresh SIM with low data usage calls many distinct numbers.' },
+  { id: 'CALL_FORWARDING', title: 'Forwarding Fan-out', detector: 'DISTANCE_FORWARDING_FRAUD', accent: 'forwarding', kind: 'Fraud', description: 'A callee redirects several short calls to different numbers.' },
+  { id: 'NEAR_MISS_SIM_CLONE', title: 'Near Miss: Location', detector: null, accent: 'velocity', kind: 'Near miss', description: 'Repeated benign location pings that should stay quiet.' },
+  { id: 'NEAR_MISS_SEQUENTIAL', title: 'Near Miss: Sequence', detector: null, accent: 'sequential', kind: 'Near miss', description: 'Only three sequential calls, below the alert threshold.' },
+  { id: 'NEAR_MISS_STATICAL_RULE', title: 'Near Miss: Static Rule', detector: null, accent: 'static', kind: 'Near miss', description: 'Nine distinct callees, one short of the SQL rule.' },
+  { id: 'NEAR_MISS_CALL_FORWARDING', title: 'Near Miss: Forwarding', detector: null, accent: 'forwarding', kind: 'Near miss', description: 'Three forwarded destinations, below the forwarding threshold.' },
 ]
 
 const filters = [
@@ -84,6 +28,13 @@ const intensityOptions = [
   { id: 'MEDIUM', label: 'Medium', detail: 'More fraud plus noise' },
   { id: 'HIGH', label: 'High', detail: 'Heavy stream burst' },
 ]
+
+const detectorLabels = {
+  VELOCITY_FRAUD_SIM_CLONE: 'SIM Clone',
+  SEQUENTIAL_DIALING: 'Sequential',
+  STATICAL_RULE_FRAUD: 'Static Rule',
+  DISTANCE_FORWARDING_FRAUD: 'Forwarding',
+}
 
 function formatUptime(ms = 0) {
   const seconds = Math.floor(ms / 1000)
@@ -103,14 +54,45 @@ function verdictFor(run) {
   return run.alertDelta > 0 ? 'Extra alerts' : 'Under detected'
 }
 
+function bucketEvents(events) {
+  const now = Date.now()
+  const buckets = Array.from({ length: 12 }, (_, index) => ({
+    label: `${11 - index}s`,
+    total: 0,
+    alerts: 0,
+  }))
+
+  events.forEach((event) => {
+    const ageSeconds = Math.floor((now - event.timestamp) / 1000)
+    if (ageSeconds >= 0 && ageSeconds < buckets.length) {
+      const bucket = buckets[buckets.length - 1 - ageSeconds]
+      bucket.total += 1
+      if (event.streamType === 'ALERT') bucket.alerts += 1
+    }
+  })
+
+  return buckets
+}
+
 function App() {
   const [alerts, setAlerts] = useState([])
+  const [streamEvents, setStreamEvents] = useState([])
   const [connectionState, setConnectionState] = useState('connecting')
+  const [eventState, setEventState] = useState('connecting')
   const [serverStatus, setServerStatus] = useState(null)
   const [activeFilter, setActiveFilter] = useState('ALL')
   const [intensity, setIntensity] = useState('LOW')
   const [lastSimulation, setLastSimulation] = useState(null)
+  const [streamPaused, setStreamPaused] = useState(false)
+  const [followTail, setFollowTail] = useState(true)
+  const [showBackground, setShowBackground] = useState(true)
+  const [manualType, setManualType] = useState('CDR')
+  const [manualMsisdn, setManualMsisdn] = useState('905423184726')
+  const [manualTarget, setManualTarget] = useState('905337092418')
+  const [manualRunId, setManualRunId] = useState('')
+  const [manualMessage, setManualMessage] = useState('')
   const alertsEndRef = useRef(null)
+  const streamEndRef = useRef(null)
 
   useEffect(() => {
     const loadStatus = async () => {
@@ -125,7 +107,7 @@ function App() {
     }
 
     loadStatus()
-    const timer = window.setInterval(loadStatus, 5000)
+    const timer = window.setInterval(loadStatus, 2000)
     return () => window.clearInterval(timer)
   }, [])
 
@@ -142,14 +124,27 @@ function App() {
       }
     }
 
-    eventSource.onerror = () => {
-      setConnectionState('reconnecting')
+    eventSource.onerror = () => setConnectionState('reconnecting')
+    return () => eventSource.close()
+  }, [])
+
+  useEffect(() => {
+    const eventSource = new EventSource(`${API_BASE_URL}/api/events`)
+
+    eventSource.onopen = () => setEventState('connected')
+    eventSource.onmessage = (event) => {
+      if (streamPaused) return
+      try {
+        const streamEvent = JSON.parse(event.data)
+        setStreamEvents((prev) => [...prev.slice(-249), streamEvent])
+      } catch (error) {
+        console.error('Failed to parse stream event', error)
+      }
     }
 
-    return () => {
-      eventSource.close()
-    }
-  }, [])
+    eventSource.onerror = () => setEventState('reconnecting')
+    return () => eventSource.close()
+  }, [streamPaused])
 
   useEffect(() => {
     if (alertsEndRef.current) {
@@ -157,10 +152,35 @@ function App() {
     }
   }, [alerts])
 
+  useEffect(() => {
+    if (followTail && streamEndRef.current) {
+      streamEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [streamEvents, followTail])
+
   const alertCounts = useMemo(() => {
     return alerts.reduce((counts, alert) => {
       counts[alert.fraudType] = (counts[alert.fraudType] || 0) + 1
       return counts
+    }, {})
+  }, [alerts])
+
+  const visibleStreamEvents = useMemo(() => {
+    return showBackground ? streamEvents : streamEvents.filter((event) => !event.background)
+  }, [showBackground, streamEvents])
+
+  const streamBuckets = useMemo(() => bucketEvents(visibleStreamEvents), [visibleStreamEvents])
+  const eventMix = useMemo(() => {
+    return visibleStreamEvents.reduce((mix, event) => {
+      mix[event.streamType] = (mix[event.streamType] || 0) + 1
+      return mix
+    }, {})
+  }, [visibleStreamEvents])
+  const detectorMix = useMemo(() => {
+    return alerts.reduce((mix, alert) => {
+      const label = detectorLabels[alert.fraudType] || alert.fraudType
+      mix[label] = (mix[label] || 0) + 1
+      return mix
     }, {})
   }, [alerts])
 
@@ -171,36 +191,64 @@ function App() {
   const handleSimulate = async (scenarioId) => {
     const response = await fetch(`${API_BASE_URL}/api/simulate`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scenario: scenarioId, intensity }),
     })
 
     const payload = await response.json()
-    if (!response.ok) {
-      throw new Error(payload.message || 'Simulation failed')
-    }
+    if (!response.ok) throw new Error(payload.message || 'Simulation failed')
 
-    setLastSimulation({
-      ...payload,
-      triggeredAt: Date.now(),
-    })
+    setLastSimulation({ ...payload, triggeredAt: Date.now() })
     setConnectionState('connected')
     return payload
   }
 
-  const statusLabel = {
-    connected: 'Connected',
-    connecting: 'Connecting',
-    reconnecting: 'Reconnecting',
-    offline: 'Server offline',
-  }[connectionState]
+  const handleProcessEvent = async (event) => {
+    event.preventDefault()
+    setManualMessage('')
+
+    const body = {
+      streamType: manualType,
+      msisdn: manualMsisdn,
+      runId: manualRunId || undefined,
+    }
+
+    if (manualType === 'CDR') {
+      body.callee = manualTarget
+      body.duration = 30
+      body.cellSite = 'Cell-M'
+      body.dataUsageMb = 25
+      body.simAgeDays = 120
+    } else {
+      body.location = manualTarget
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/process-event`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.message || 'Event rejected')
+      setManualMessage(`Processed ${payload.streamType} event`)
+    } catch (error) {
+      setManualMessage(error.message)
+    }
+  }
 
   const activeRuns = serverStatus?.activeRuns ?? []
   const completedRuns = serverStatus?.completedRuns ?? []
   const matchedRuns = completedRuns.filter((run) => run.expectedAlerts === run.actualAlerts).length
   const detectionScore = completedRuns.length > 0 ? Math.round((matchedRuns / completedRuns.length) * 100) : 0
+  const emitted = serverStatus?.eventsEmitted ?? 0
+  const scheduled = serverStatus?.eventsScheduled ?? 0
+  const streamRate = streamBuckets.slice(-5).reduce((sum, bucket) => sum + bucket.total, 0) / 5
+  const statusLabel = connectionState === 'connected' && eventState === 'connected'
+    ? 'Streams connected'
+    : connectionState === 'offline'
+      ? 'Server offline'
+      : 'Reconnecting'
 
   return (
     <>
@@ -209,7 +257,7 @@ function App() {
           <span className="brand-mark">V</span>
           <div>
             <h1>Vodafone Fraud Detection</h1>
-            <p>Apache Flink simulation console</p>
+            <p>Apache Flink live stream console</p>
           </div>
         </div>
         <div className={`status-badge ${connectionState}`}>
@@ -218,21 +266,16 @@ function App() {
         </div>
       </header>
 
-      <main className="main-content">
+      <main className="main-content stream-layout">
         <section className="control-panel">
           <div className="panel-header">
             <h2>Simulation Scenarios</h2>
-            <p>Inject fraud patterns into the streaming pipeline and watch detections land live.</p>
+            <p>Inject fraud and near-miss traffic into the stream.</p>
           </div>
 
           <div className="intensity-control" aria-label="Simulation intensity">
             {intensityOptions.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                className={intensity === option.id ? 'active' : ''}
-                onClick={() => setIntensity(option.id)}
-              >
+              <button key={option.id} type="button" className={intensity === option.id ? 'active' : ''} onClick={() => setIntensity(option.id)}>
                 <strong>{option.label}</strong>
                 <span>{option.detail}</span>
               </button>
@@ -251,13 +294,127 @@ function App() {
             ))}
           </div>
 
+          <form className="manual-event" onSubmit={handleProcessEvent}>
+            <div className="panel-header">
+              <h2>Process Event</h2>
+              <p>Push one custom event directly into the Flink sources.</p>
+            </div>
+            <div className="manual-grid">
+              <label>
+                Type
+                <select value={manualType} onChange={(event) => setManualType(event.target.value)}>
+                  <option value="CDR">CDR</option>
+                  <option value="LOCATION">Location</option>
+                </select>
+              </label>
+              <label>
+                MSISDN
+                <input value={manualMsisdn} onChange={(event) => setManualMsisdn(event.target.value)} />
+              </label>
+              <label>
+                {manualType === 'CDR' ? 'Callee' : 'Location'}
+                <input value={manualTarget} onChange={(event) => setManualTarget(event.target.value)} />
+              </label>
+              <label>
+                Run ID
+                <input placeholder="auto" value={manualRunId} onChange={(event) => setManualRunId(event.target.value)} />
+              </label>
+            </div>
+            <button type="submit" className="process-btn">Process</button>
+            {manualMessage && <p className="manual-message">{manualMessage}</p>}
+          </form>
+        </section>
+
+        <section className="feed-panel">
+          <div className="pipeline-strip">
+            {['Simulation', 'Sources', 'Detectors', 'Alert Sink', 'Dashboard'].map((stage, index) => (
+              <div className={activeRuns.length > 0 || visibleStreamEvents.length > 0 ? 'active' : ''} key={stage}>
+                <span>{index + 1}</span>
+                {stage}
+              </div>
+            ))}
+          </div>
+
+          <div className="metrics-grid">
+            <div className="metric"><span>Events emitted</span><strong>{emitted}</strong></div>
+            <div className="metric"><span>Stream rate</span><strong>{streamRate.toFixed(1)}/s</strong></div>
+            <div className="metric"><span>Total alerts</span><strong>{alerts.length}</strong></div>
+            <div className="metric"><span>Run match rate</span><strong>{completedRuns.length > 0 ? `${detectionScore}%` : '-'}</strong></div>
+            <div className="metric"><span>Queued events</span><strong>{(serverStatus?.queuedCdrEvents ?? 0) + (serverStatus?.queuedLocationEvents ?? 0)}</strong></div>
+            <div className="metric"><span>Progress</span><strong>{scheduled > 0 ? `${Math.round((emitted / scheduled) * 100)}%` : '-'}</strong></div>
+          </div>
+
+          <div className="charts-grid">
+            <section className="chart-panel">
+              <div className="feed-toolbar compact">
+                <div>
+                  <h2>Throughput</h2>
+                  <p>Events per second, last 12 seconds</p>
+                </div>
+              </div>
+              <div className="bar-chart">
+                {streamBuckets.map((bucket) => {
+                  const max = Math.max(1, ...streamBuckets.map((item) => item.total))
+                  return (
+                    <div className="bar-column" key={bucket.label}>
+                      <span style={{ height: `${Math.max(4, (bucket.total / max) * 100)}%` }} />
+                      <small>{bucket.total}</small>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+
+            <section className="chart-panel">
+              <div className="feed-toolbar compact">
+                <div>
+                  <h2>Event Mix</h2>
+                  <p>Visible stream composition</p>
+                </div>
+              </div>
+              <div className="mix-list">
+                {['CDR', 'LOCATION', 'ALERT'].map((type) => {
+                  const count = eventMix[type] || 0
+                  const max = Math.max(1, ...Object.values(eventMix), count)
+                  return (
+                    <div className="mix-row" key={type}>
+                      <span>{type}</span>
+                      <div><i style={{ width: `${(count / max) * 100}%` }} /></div>
+                      <strong>{count}</strong>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+
+            <section className="chart-panel">
+              <div className="feed-toolbar compact">
+                <div>
+                  <h2>Detector Mix</h2>
+                  <p>Alerts by detector</p>
+                </div>
+              </div>
+              <div className="mix-list">
+                {Object.entries(detectorLabels).map(([type, label]) => {
+                  const count = detectorMix[label] || 0
+                  const max = Math.max(1, ...Object.values(detectorMix), count)
+                  return (
+                    <div className="mix-row" key={type}>
+                      <span>{label}</span>
+                      <div><i style={{ width: `${(count / max) * 100}%` }} /></div>
+                      <strong>{count}</strong>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          </div>
+
           {lastSimulation && (
             <div className="simulation-receipt">
               <span>Last scheduled run</span>
               <strong>{lastSimulation.scenario.replaceAll('_', ' ')} · {lastSimulation.intensity}</strong>
-              <p>
-                {lastSimulation.totalEvents} events over {formatUptime(lastSimulation.durationMs)} · expected {lastSimulation.expectedAlerts}, actual {lastSimulation.actualAlerts}
-              </p>
+              <p>{lastSimulation.totalEvents} events over {formatUptime(lastSimulation.durationMs)} · expected {lastSimulation.expectedAlerts}, actual {lastSimulation.actualAlerts}</p>
             </div>
           )}
 
@@ -275,35 +432,42 @@ function App() {
               ))}
             </div>
           )}
-        </section>
 
-        <section className="feed-panel">
-          <div className="metrics-grid">
-            <div className="metric">
-              <span>Total alerts</span>
-              <strong>{alerts.length}</strong>
+          <section className="stream-console">
+            <div className="feed-toolbar">
+              <div>
+                <h2>Live Event Stream</h2>
+                <p>{visibleStreamEvents.length} retained rows from generated, manual, and alert events</p>
+              </div>
+              <div className="stream-controls">
+                <button type="button" className={streamPaused ? 'active' : ''} onClick={() => setStreamPaused((value) => !value)}>{streamPaused ? 'Resume' : 'Pause'}</button>
+                <button type="button" className={followTail ? 'active' : ''} onClick={() => setFollowTail((value) => !value)}>Follow</button>
+                <button type="button" className={showBackground ? 'active' : ''} onClick={() => setShowBackground((value) => !value)}>Noise</button>
+                <button type="button" onClick={() => setStreamEvents([])}>Clear</button>
+              </div>
             </div>
-            <div className="metric">
-              <span>Run match rate</span>
-              <strong>{completedRuns.length > 0 ? `${detectionScore}%` : '-'}</strong>
+
+            <div className="stream-tape">
+              {visibleStreamEvents.length === 0 ? (
+                <div className="stream-empty">Waiting for stream events...</div>
+              ) : (
+                visibleStreamEvents.map((event, index) => (
+                  <div className="stream-row" data-type={event.streamType} key={`${event.timestamp}-${index}`}>
+                    <time>{new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time>
+                    <span className="stream-type">{event.streamType}</span>
+                    <span className="stream-main">
+                      {event.streamType === 'CDR' && `${event.msisdn} -> ${event.callee}`}
+                      {event.streamType === 'LOCATION' && `${event.msisdn} @ ${event.location}`}
+                      {event.streamType === 'ALERT' && `${event.fraudType} · ${event.msisdn}`}
+                    </span>
+                    <span className="stream-run">{event.runId || 'no-run'}</span>
+                    <span className="stream-source">{event.background ? 'noise' : event.source || 'signal'}</span>
+                  </div>
+                ))
+              )}
+              <div ref={streamEndRef} />
             </div>
-            <div className="metric">
-              <span>Simulations</span>
-              <strong>{serverStatus?.simulationsTriggered ?? 0}</strong>
-            </div>
-            <div className="metric">
-              <span>Queued events</span>
-              <strong>{(serverStatus?.queuedCdrEvents ?? 0) + (serverStatus?.queuedLocationEvents ?? 0)}</strong>
-            </div>
-            <div className="metric">
-              <span>Active runs</span>
-              <strong>{activeRuns.length}</strong>
-            </div>
-            <div className="metric">
-              <span>Server uptime</span>
-              <strong>{serverStatus ? formatUptime(serverStatus.uptimeMs) : '-'}</strong>
-            </div>
-          </div>
+          </section>
 
           <div className="run-history">
             <div className="feed-toolbar compact">
@@ -336,23 +500,15 @@ function App() {
 
           <div className="feed-toolbar">
             <div>
-              <h2>Live Alert Feed</h2>
+              <h2>Alert Feed</h2>
               <p>{filteredAlerts.length} visible alerts from the current session</p>
             </div>
-            <button className="clear-btn" type="button" onClick={() => setAlerts([])} disabled={alerts.length === 0}>
-              Clear
-            </button>
+            <button className="clear-btn" type="button" onClick={() => setAlerts([])} disabled={alerts.length === 0}>Clear</button>
           </div>
 
           <div className="filter-bar" role="tablist" aria-label="Alert filters">
             {filters.map((filter) => (
-              <button
-                key={filter.id}
-                type="button"
-                role="tab"
-                className={activeFilter === filter.id ? 'active' : ''}
-                onClick={() => setActiveFilter(filter.id)}
-              >
+              <button key={filter.id} type="button" role="tab" className={activeFilter === filter.id ? 'active' : ''} onClick={() => setActiveFilter(filter.id)}>
                 {filter.label}
               </button>
             ))}
