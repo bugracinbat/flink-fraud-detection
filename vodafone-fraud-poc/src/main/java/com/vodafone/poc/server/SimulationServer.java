@@ -14,10 +14,20 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class SimulationServer {
@@ -29,10 +39,16 @@ public class SimulationServer {
     private static final long startedAt = System.currentTimeMillis();
     private static final AtomicLong simulationsTriggered = new AtomicLong();
     private static final AtomicLong alertsBroadcast = new AtomicLong();
+    private static final AtomicLong eventsScheduled = new AtomicLong();
+    private static final AtomicLong eventsEmitted = new AtomicLong();
+    private static final AtomicLong activeRunSequence = new AtomicLong();
+    private static final Random random = new Random();
+    private static final ScheduledExecutorService simulationExecutor = Executors.newScheduledThreadPool(4);
+    private static final ConcurrentHashMap<String, SimulationRun> activeRuns = new ConcurrentHashMap<>();
     private static final Map<String, String> scenarios = new LinkedHashMap<>();
 
     static {
-        scenarios.put("SIM_CLONE", "Location velocity pattern using impossible Germany to Turkiye travel.");
+        scenarios.put("SIM_CLONE", "Location velocity pattern using impossible country jumps.");
         scenarios.put("SEQUENTIAL_DIALING", "Rapid calls to sequential destination numbers.");
         scenarios.put("STATICAL_RULE", "New SIM with low data usage and many distinct callees.");
         scenarios.put("CALL_FORWARDING", "One callee redirecting to many different forwarded numbers.");
@@ -40,12 +56,12 @@ public class SimulationServer {
 
     public static void startServer() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
-        
+
         server.createContext("/api/simulate", new SimulateHandler());
         server.createContext("/api/alerts", new AlertsHandler());
         server.createContext("/api/status", new StatusHandler());
-        
-        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+
+        server.setExecutor(Executors.newCachedThreadPool());
         server.start();
         System.out.println("Simulation Server started on port 8080");
     }
@@ -65,6 +81,222 @@ public class SimulationServer {
                 sseClients.remove(client);
             }
         }
+    }
+
+    private static SimulationProfile profileFor(String intensity) {
+        switch (intensity) {
+            case "HIGH":
+                return new SimulationProfile("HIGH", 100, 8, 200, 80, 3, 80);
+            case "MEDIUM":
+                return new SimulationProfile("MEDIUM", 25, 4, 50, 24, 2, 220);
+            case "LOW":
+            default:
+                return new SimulationProfile("LOW", 5, 2, 10, 6, 1, 350);
+        }
+    }
+
+    private static String normalizeIntensity(JsonObject jsonObject) {
+        if (jsonObject == null || !jsonObject.has("intensity")) {
+            return "LOW";
+        }
+
+        String intensity = jsonObject.get("intensity").getAsString().toUpperCase(Locale.ROOT);
+        if ("LOW".equals(intensity) || "MEDIUM".equals(intensity) || "HIGH".equals(intensity)) {
+            return intensity;
+        }
+        return "LOW";
+    }
+
+    private static SimulationPlan createPlan(String scenario, String intensity) {
+        SimulationProfile profile = profileFor(intensity);
+        List<ScheduledEvent> events = new ArrayList<>();
+        int fraudCdrEvents = 0;
+        int fraudLocationEvents = 0;
+        int expectedAlerts = 1;
+
+        switch (scenario) {
+            case "SIM_CLONE":
+                fraudLocationEvents = profile.simCloneJumps + 1;
+                expectedAlerts = profile.simCloneJumps;
+                addSimCloneEvents(events, profile);
+                break;
+            case "SEQUENTIAL_DIALING":
+                fraudCdrEvents = profile.sequentialCalls;
+                expectedAlerts = Math.max(1, profile.sequentialCalls / 4);
+                addSequentialDialingEvents(events, profile);
+                break;
+            case "STATICAL_RULE":
+                fraudCdrEvents = profile.staticDistinctCallees;
+                expectedAlerts = 1;
+                addStaticRuleEvents(events, profile);
+                break;
+            case "CALL_FORWARDING":
+                fraudCdrEvents = profile.forwardingCalls;
+                expectedAlerts = Math.max(1, profile.forwardingCalls / 4);
+                addCallForwardingEvents(events, profile);
+                break;
+            default:
+                throw new IllegalArgumentException("Unknown simulation scenario: " + scenario);
+        }
+
+        int fraudEvents = fraudCdrEvents + fraudLocationEvents;
+        addBackgroundEvents(events, profile, Math.max(6, fraudEvents * profile.backgroundNoiseRatio));
+
+        long durationMs = 0;
+        int backgroundCdrEvents = 0;
+        int backgroundLocationEvents = 0;
+        for (ScheduledEvent event : events) {
+            durationMs = Math.max(durationMs, event.delayMs);
+            if (event.background) {
+                if (event.cdrEvent != null) {
+                    backgroundCdrEvents++;
+                } else {
+                    backgroundLocationEvents++;
+                }
+            }
+        }
+
+        return new SimulationPlan(
+                scenario,
+                profile,
+                events,
+                fraudCdrEvents,
+                fraudLocationEvents,
+                backgroundCdrEvents,
+                backgroundLocationEvents,
+                expectedAlerts,
+                durationMs
+        );
+    }
+
+    private static void addSimCloneEvents(List<ScheduledEvent> events, SimulationProfile profile) {
+        String msisdn = "905559998877";
+        String[] locations = {"Germany", "Turkiye", "Netherlands", "Turkiye", "France", "Turkiye", "Spain", "Turkiye", "Italy"};
+
+        for (int i = 0; i <= profile.simCloneJumps; i++) {
+            long delay = i * profile.spacingMs;
+            String location = locations[i % locations.length];
+            events.add(ScheduledEvent.location(delay, new LocationEvent(msisdn, location, 0), false));
+        }
+    }
+
+    private static void addSequentialDialingEvents(List<ScheduledEvent> events, SimulationProfile profile) {
+        String caller = "905554443322";
+        long seqBase = 905550000000L + (activeRunSequence.incrementAndGet() * 1000);
+
+        for (int i = 0; i < profile.sequentialCalls; i++) {
+            long delay = i * profile.spacingMs;
+            String callee = String.valueOf(seqBase + i);
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, callee, 0, 5, null, "Cell-B", "IMEI-2", 50.0, 100), false));
+        }
+    }
+
+    private static void addStaticRuleEvents(List<ScheduledEvent> events, SimulationProfile profile) {
+        String caller = "905553332211";
+        long calleeBase = 905559990000L + (activeRunSequence.incrementAndGet() * 1000);
+
+        for (int i = 0; i < profile.staticDistinctCallees; i++) {
+            long delay = i * profile.spacingMs;
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(caller, String.valueOf(calleeBase + i), 0, 30, null, "Cell-C", "IMEI-3", 2.5, 2), false));
+        }
+    }
+
+    private static void addCallForwardingEvents(List<ScheduledEvent> events, SimulationProfile profile) {
+        String callerA = "905551111111";
+        String calleeB = "905552222222";
+        long forwardedBase = 905558888000L + (activeRunSequence.incrementAndGet() * 1000);
+
+        for (int i = 0; i < profile.forwardingCalls; i++) {
+            long delay = i * profile.spacingMs;
+            String forwardedTo = String.valueOf(forwardedBase + i);
+            events.add(ScheduledEvent.cdr(delay, new CdrEvent(callerA, calleeB, 0, 0, forwardedTo, "Cell-D", "IMEI-4", 200.0, 500), false));
+        }
+    }
+
+    private static void addBackgroundEvents(List<ScheduledEvent> events, SimulationProfile profile, int count) {
+        long totalDuration = Math.max(profile.spacingMs * 8L, maxDelay(events));
+        long step = Math.max(120L, totalDuration / Math.max(1, count));
+
+        for (int i = 0; i < count; i++) {
+            long delay = Math.max(50L, (i * step) + random.nextInt((int) Math.min(step, 250L)));
+            if (i % 5 == 0) {
+                events.add(ScheduledEvent.location(delay, backgroundLocationEvent(), true));
+            } else {
+                events.add(ScheduledEvent.cdr(delay, backgroundCdrEvent(i), true));
+            }
+        }
+    }
+
+    private static long maxDelay(List<ScheduledEvent> events) {
+        long max = 0;
+        for (ScheduledEvent event : events) {
+            max = Math.max(max, event.delayMs);
+        }
+        return max;
+    }
+
+    private static CdrEvent backgroundCdrEvent(int index) {
+        String[] callers = {"905551234567", "905552468135", "905553579246", "905554681357", "905555792468", "905556813579"};
+        String[] cellSites = {"Cell-A", "Cell-E", "Cell-F", "Cell-G", "Cell-H"};
+        String caller = callers[random.nextInt(callers.length)];
+        String callee = "90555" + (1000000 + random.nextInt(8000000));
+        long duration = 20 + random.nextInt(260);
+        String forwardedTo = null;
+        double dataUsage = 20.0 + random.nextInt(900);
+        int simAge = 30 + random.nextInt(900);
+
+        if (index % 9 == 0) {
+            duration = 0; // Dropped or missed call.
+        } else if (index % 11 == 0) {
+            duration = 0;
+            callee = "DATA_SESSION_" + random.nextInt(1000);
+            dataUsage = 80.0 + random.nextInt(1200);
+        } else if (index % 13 == 0) {
+            forwardedTo = "905557" + (100000 + random.nextInt(800000));
+            duration = 8 + random.nextInt(20);
+        } else if (index % 7 == 0) {
+            duration = 3 + random.nextInt(12);
+        }
+
+        return new CdrEvent(caller, callee, 0, duration, forwardedTo, cellSites[random.nextInt(cellSites.length)], "IMEI-N" + random.nextInt(500), dataUsage, simAge);
+    }
+
+    private static LocationEvent backgroundLocationEvent() {
+        String[] users = {"905557001001", "905557001002", "905557001003", "905557001004", "905557001005"};
+        String[] locations = {"Istanbul", "Ankara", "Izmir", "Bursa", "Antalya"};
+        int userIndex = random.nextInt(users.length);
+        return new LocationEvent(users[userIndex], locations[userIndex], 0);
+    }
+
+    private static SimulationRun schedulePlan(SimulationPlan plan) {
+        String runId = plan.scenario + "-" + UUID.randomUUID().toString().substring(0, 8);
+        SimulationRun run = new SimulationRun(runId, plan);
+        activeRuns.put(runId, run);
+        simulationsTriggered.incrementAndGet();
+        eventsScheduled.addAndGet(plan.events.size());
+
+        for (ScheduledEvent event : plan.events) {
+            simulationExecutor.schedule(() -> {
+                long now = System.currentTimeMillis();
+                if (event.cdrEvent != null) {
+                    CdrEvent cdr = event.cdrEvent;
+                    cdr.setTimestamp(now);
+                    cdrQueue.offer(cdr);
+                } else {
+                    LocationEvent location = event.locationEvent;
+                    location.setTimestamp(now);
+                    locationQueue.offer(location);
+                }
+
+                eventsEmitted.incrementAndGet();
+                if (run.markEventEmitted() >= run.totalEvents) {
+                    run.completedAt = System.currentTimeMillis();
+                    activeRuns.remove(run.runId);
+                }
+            }, event.delayMs, TimeUnit.MILLISECONDS);
+        }
+
+        return run;
     }
 
     private static boolean handleCors(HttpExchange exchange) throws IOException {
@@ -108,57 +340,10 @@ public class SimulationServer {
                     return;
                 }
 
-                long baseTime = System.currentTimeMillis();
-                int cdrEvents = 0;
-                int locationEvents = 0;
-                int expectedAlerts = 1;
-
-                switch (scenario) {
-                    case "SIM_CLONE":
-                        locationQueue.offer(new LocationEvent("905559998877", "Germany", baseTime));
-                        locationQueue.offer(new LocationEvent("905559998877", "Turkiye", baseTime + (5 * 60 * 1000)));
-                        locationEvents = 2;
-                        break;
-                    case "SEQUENTIAL_DIALING":
-                        String seqCaller = "905554443322";
-                        long seqBase = 5550000;
-                        for (int i = 0; i < 5; i++) {
-                            long ts = baseTime + (i * 1000);
-                            cdrQueue.offer(new CdrEvent(seqCaller, "90" + (seqBase + i), ts, 5, null, "Cell-B", "IMEI-2", 50.0, 100));
-                        }
-                        cdrEvents = 5;
-                        break;
-                    case "STATICAL_RULE":
-                        String staticCaller = "905553332211";
-                        for (int i = 0; i < 11; i++) {
-                            long ts = baseTime + (i * 1000);
-                            cdrQueue.offer(new CdrEvent(staticCaller, "9055599900" + (i < 10 ? "0" + i : i), ts, 30, null, "Cell-C", "IMEI-3", 2.5, 2));
-                        }
-                        cdrEvents = 11;
-                        break;
-                    case "CALL_FORWARDING":
-                        String callerA = "905551111111";
-                        String calleeB = "905552222222";
-                        for (int i = 0; i < 6; i++) {
-                            long ts = baseTime + (i * 1000);
-                            String forwardedTo = "90555888880" + i;
-                            cdrQueue.offer(new CdrEvent(callerA, calleeB, ts, 0, forwardedTo, "Cell-D", "IMEI-4", 200.0, 500));
-                        }
-                        cdrEvents = 6;
-                        break;
-                }
-
-                simulationsTriggered.incrementAndGet();
-                Map<String, Object> response = new LinkedHashMap<>();
-                response.put("status", "ok");
-                response.put("scenario", scenario);
-                response.put("description", scenarios.get(scenario));
-                response.put("cdrEvents", cdrEvents);
-                response.put("locationEvents", locationEvents);
-                response.put("expectedAlerts", expectedAlerts);
-                response.put("queuedCdrEvents", cdrQueue.size());
-                response.put("queuedLocationEvents", locationQueue.size());
-                sendJson(exchange, 200, response);
+                String intensity = normalizeIntensity(jsonObject);
+                SimulationPlan plan = createPlan(scenario, intensity);
+                SimulationRun run = schedulePlan(plan);
+                sendJson(exchange, 202, run.toResponse());
                 return;
             }
 
@@ -176,6 +361,11 @@ public class SimulationServer {
                 return;
             }
 
+            List<Map<String, Object>> runs = new ArrayList<>();
+            for (SimulationRun run : activeRuns.values()) {
+                runs.add(run.toStatus());
+            }
+
             Map<String, Object> status = new LinkedHashMap<>();
             status.put("status", "ok");
             status.put("uptimeMs", System.currentTimeMillis() - startedAt);
@@ -184,6 +374,9 @@ public class SimulationServer {
             status.put("queuedLocationEvents", locationQueue.size());
             status.put("simulationsTriggered", simulationsTriggered.get());
             status.put("alertsBroadcast", alertsBroadcast.get());
+            status.put("eventsScheduled", eventsScheduled.get());
+            status.put("eventsEmitted", eventsEmitted.get());
+            status.put("activeRuns", runs);
             status.put("scenarios", scenarios);
             sendJson(exchange, 200, status);
         }
@@ -203,8 +396,133 @@ public class SimulationServer {
             exchange.getResponseHeaders().add("Cache-Control", "no-cache");
             exchange.getResponseHeaders().add("Connection", "keep-alive");
             exchange.sendResponseHeaders(200, 0);
-            
+
             sseClients.add(exchange);
+        }
+    }
+
+    private static class SimulationProfile {
+        private final String intensity;
+        private final int sequentialCalls;
+        private final int simCloneJumps;
+        private final int staticDistinctCallees;
+        private final int forwardingCalls;
+        private final int backgroundNoiseRatio;
+        private final long spacingMs;
+
+        private SimulationProfile(String intensity, int sequentialCalls, int simCloneJumps, int staticDistinctCallees, int forwardingCalls, int backgroundNoiseRatio, long spacingMs) {
+            this.intensity = intensity;
+            this.sequentialCalls = sequentialCalls;
+            this.simCloneJumps = simCloneJumps;
+            this.staticDistinctCallees = staticDistinctCallees;
+            this.forwardingCalls = forwardingCalls;
+            this.backgroundNoiseRatio = backgroundNoiseRatio;
+            this.spacingMs = spacingMs;
+        }
+    }
+
+    private static class SimulationPlan {
+        private final String scenario;
+        private final SimulationProfile profile;
+        private final List<ScheduledEvent> events;
+        private final int fraudCdrEvents;
+        private final int fraudLocationEvents;
+        private final int backgroundCdrEvents;
+        private final int backgroundLocationEvents;
+        private final int expectedAlerts;
+        private final long durationMs;
+
+        private SimulationPlan(String scenario, SimulationProfile profile, List<ScheduledEvent> events, int fraudCdrEvents, int fraudLocationEvents, int backgroundCdrEvents, int backgroundLocationEvents, int expectedAlerts, long durationMs) {
+            this.scenario = scenario;
+            this.profile = profile;
+            this.events = events;
+            this.fraudCdrEvents = fraudCdrEvents;
+            this.fraudLocationEvents = fraudLocationEvents;
+            this.backgroundCdrEvents = backgroundCdrEvents;
+            this.backgroundLocationEvents = backgroundLocationEvents;
+            this.expectedAlerts = expectedAlerts;
+            this.durationMs = durationMs;
+        }
+    }
+
+    private static class SimulationRun {
+        private final String runId;
+        private final String scenario;
+        private final String intensity;
+        private final long startedAt;
+        private final long durationMs;
+        private final int totalEvents;
+        private final int fraudCdrEvents;
+        private final int fraudLocationEvents;
+        private final int backgroundCdrEvents;
+        private final int backgroundLocationEvents;
+        private final int expectedAlerts;
+        private final AtomicInteger emittedEvents = new AtomicInteger();
+        private volatile long completedAt;
+
+        private SimulationRun(String runId, SimulationPlan plan) {
+            this.runId = runId;
+            this.scenario = plan.scenario;
+            this.intensity = plan.profile.intensity;
+            this.startedAt = System.currentTimeMillis();
+            this.durationMs = plan.durationMs;
+            this.totalEvents = plan.events.size();
+            this.fraudCdrEvents = plan.fraudCdrEvents;
+            this.fraudLocationEvents = plan.fraudLocationEvents;
+            this.backgroundCdrEvents = plan.backgroundCdrEvents;
+            this.backgroundLocationEvents = plan.backgroundLocationEvents;
+            this.expectedAlerts = plan.expectedAlerts;
+        }
+
+        private int markEventEmitted() {
+            return emittedEvents.incrementAndGet();
+        }
+
+        private Map<String, Object> toResponse() {
+            Map<String, Object> response = toStatus();
+            response.put("status", "scheduled");
+            response.put("description", scenarios.get(scenario));
+            return response;
+        }
+
+        private Map<String, Object> toStatus() {
+            Map<String, Object> status = new LinkedHashMap<>();
+            status.put("runId", runId);
+            status.put("scenario", scenario);
+            status.put("intensity", intensity);
+            status.put("startedAt", startedAt);
+            status.put("durationMs", durationMs);
+            status.put("totalEvents", totalEvents);
+            status.put("emittedEvents", emittedEvents.get());
+            status.put("fraudCdrEvents", fraudCdrEvents);
+            status.put("fraudLocationEvents", fraudLocationEvents);
+            status.put("backgroundCdrEvents", backgroundCdrEvents);
+            status.put("backgroundLocationEvents", backgroundLocationEvents);
+            status.put("expectedAlerts", expectedAlerts);
+            status.put("completed", completedAt > 0);
+            return status;
+        }
+    }
+
+    private static class ScheduledEvent {
+        private final long delayMs;
+        private final CdrEvent cdrEvent;
+        private final LocationEvent locationEvent;
+        private final boolean background;
+
+        private ScheduledEvent(long delayMs, CdrEvent cdrEvent, LocationEvent locationEvent, boolean background) {
+            this.delayMs = delayMs;
+            this.cdrEvent = cdrEvent;
+            this.locationEvent = locationEvent;
+            this.background = background;
+        }
+
+        private static ScheduledEvent cdr(long delayMs, CdrEvent event, boolean background) {
+            return new ScheduledEvent(delayMs, event, null, background);
+        }
+
+        private static ScheduledEvent location(long delayMs, LocationEvent event, boolean background) {
+            return new ScheduledEvent(delayMs, null, event, background);
         }
     }
 }

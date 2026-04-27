@@ -40,6 +40,12 @@ const filters = [
   ...scenarios.map((scenario) => ({ id: scenario.detector, label: scenario.title })),
 ]
 
+const intensityOptions = [
+  { id: 'LOW', label: 'Low', detail: 'Short demo run' },
+  { id: 'MEDIUM', label: 'Medium', detail: 'More fraud plus noise' },
+  { id: 'HIGH', label: 'High', detail: 'Heavy stream burst' },
+]
+
 function formatUptime(ms = 0) {
   const seconds = Math.floor(ms / 1000)
   const minutes = Math.floor(seconds / 60)
@@ -55,6 +61,7 @@ function App() {
   const [connectionState, setConnectionState] = useState('connecting')
   const [serverStatus, setServerStatus] = useState(null)
   const [activeFilter, setActiveFilter] = useState('ALL')
+  const [intensity, setIntensity] = useState('LOW')
   const [lastSimulation, setLastSimulation] = useState(null)
   const alertsEndRef = useRef(null)
 
@@ -120,7 +127,7 @@ function App() {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ scenario: scenarioId }),
+      body: JSON.stringify({ scenario: scenarioId, intensity }),
     })
 
     const payload = await response.json()
@@ -142,6 +149,8 @@ function App() {
     reconnecting: 'Reconnecting',
     offline: 'Server offline',
   }[connectionState]
+
+  const activeRuns = serverStatus?.activeRuns ?? []
 
   return (
     <>
@@ -166,12 +175,27 @@ function App() {
             <p>Inject fraud patterns into the streaming pipeline and watch detections land live.</p>
           </div>
 
+          <div className="intensity-control" aria-label="Simulation intensity">
+            {intensityOptions.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className={intensity === option.id ? 'active' : ''}
+                onClick={() => setIntensity(option.id)}
+              >
+                <strong>{option.label}</strong>
+                <span>{option.detail}</span>
+              </button>
+            ))}
+          </div>
+
           <div className="sim-buttons">
             {scenarios.map((scenario) => (
               <SimulateButton
                 key={scenario.id}
                 scenario={scenario}
                 alertCount={alertCounts[scenario.detector] || 0}
+                intensity={intensity}
                 onSimulate={handleSimulate}
               />
             ))}
@@ -179,11 +203,26 @@ function App() {
 
           {lastSimulation && (
             <div className="simulation-receipt">
-              <span>Last injection</span>
-              <strong>{lastSimulation.scenario.replaceAll('_', ' ')}</strong>
+              <span>Last scheduled run</span>
+              <strong>{lastSimulation.scenario.replaceAll('_', ' ')} · {lastSimulation.intensity}</strong>
               <p>
-                {lastSimulation.cdrEvents} CDRs, {lastSimulation.locationEvents} location events queued
+                {lastSimulation.totalEvents} events over {formatUptime(lastSimulation.durationMs)} with {lastSimulation.expectedAlerts} expected alerts
               </p>
+            </div>
+          )}
+
+          {activeRuns.length > 0 && (
+            <div className="active-runs">
+              <span>Active runs</span>
+              {activeRuns.map((run) => (
+                <div className="run-progress" key={run.runId}>
+                  <div>
+                    <strong>{run.scenario.replaceAll('_', ' ')}</strong>
+                    <small>{run.emittedEvents}/{run.totalEvents} events</small>
+                  </div>
+                  <progress max={run.totalEvents} value={run.emittedEvents} />
+                </div>
+              ))}
             </div>
           )}
         </section>
@@ -201,6 +240,10 @@ function App() {
             <div className="metric">
               <span>Queued events</span>
               <strong>{(serverStatus?.queuedCdrEvents ?? 0) + (serverStatus?.queuedLocationEvents ?? 0)}</strong>
+            </div>
+            <div className="metric">
+              <span>Active runs</span>
+              <strong>{activeRuns.length}</strong>
             </div>
             <div className="metric">
               <span>Server uptime</span>

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-export const SimulateButton = ({ scenario, alertCount, onSimulate }) => {
+export const SimulateButton = ({ scenario, alertCount, intensity, onSimulate }) => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -33,7 +33,7 @@ export const SimulateButton = ({ scenario, alertCount, onSimulate }) => {
         </span>
         <span className="sim-description">{error || scenario.description}</span>
       </span>
-      <span className="sim-action">{loading ? '...' : 'Run'}</span>
+      <span className="sim-action">{loading ? '...' : `Run ${intensity.toLowerCase()}`}</span>
     </button>
   )
 }
