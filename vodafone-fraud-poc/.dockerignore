@@ -1,0 +1,7 @@
+.git
+.DS_Store
+target
+dashboard/node_modules
+dashboard/dist
+**/*.log
+**/.env

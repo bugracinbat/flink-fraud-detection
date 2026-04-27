@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCard } from './components/AlertCard'
 import { SimulateButton } from './components/SimulateButton'
 
-const API_BASE_URL = 'http://localhost:8080'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080'
 
 const scenarios = [
   { id: 'SIM_CLONE', title: 'SIM Clone Velocity', detector: 'VELOCITY_FRAUD_SIM_CLONE', accent: 'velocity', kind: 'Fraud', description: 'Same subscriber appears in Germany, then Turkiye five minutes later.' },
